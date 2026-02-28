@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Student Panel</h2>
+        <button onclick="startExam()" class="active">Start Exam</button>
+        <button onclick="logout()" class="logout">Logout</button>
+    </div>
+
+    <div class="content">
+        <h3 class="section-title">Dashboard</h3>
+        <div id="exam-list-container">
+            <p>Your available exams will be listed here.</p>
+            <!-- Example of how an exam could be listed -->
+            <!-- <div class="exam-item"><span>Maths 101 Final</span><button onclick="startExam(1)">Start</button></div> -->
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/student-dashboard.js"></script>
+</body>
+</html>

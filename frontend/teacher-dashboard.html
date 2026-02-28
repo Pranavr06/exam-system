@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teacher Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Teacher Panel</h2>
+        <button type="button" class="active">Create Exam</button>
+        <button type="button" onclick="logout()" class="logout">Logout</button>
+    </div>
+
+    <div class="content">
+        <div id="exam-creation-section" class="form-container active">
+            <h3 class="section-title">Create New Exam</h3>
+            <form onsubmit="handleCreateExam(event)">
+                <div class="form-group"><label for="exam-name">Exam Name</label><input id="exam-name" type="text" name="exam_name" required></div>
+                <div class="form-group"><label for="exam-subject">Subject ID</label><input id="exam-subject" type="number" name="subject_id" required></div>
+                <div class="form-group"><label for="exam-duration">Duration (Minutes)</label><input id="exam-duration" type="number" name="duration" required></div>
+                <button type="submit" class="submit-btn">Create Exam</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/teacher-dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Admin Dashboard - OEMS</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+    <div class="sidebar">
+        <h2>Super Admin</h2>
+        <button type="button" data-section="department" onclick="showSection('department')" class="active">Create Department</button>
+        <button type="button" data-section="admin" onclick="showSection('admin')">Create Admin</button>
+        <button type="button" onclick="logout()" class="logout" data-section="logout">Logout</button>
+    </div>
+
+    <div class="content">
+        <!-- 1. Create Department -->
+        <div id="department-section" class="form-container active">
+            <h3 class="section-title">Create New Department</h3>
+            <form onsubmit="handleFormSubmit(event, '/superadmin/departments')">
+                <div class="form-group">
+                    <label for="dept-name">Department Name</label>
+                    <input id="dept-name" type="text" name="name" required>
+                </div>
+                <button type="submit" class="submit-btn">Create Department</button>
+            </form>
+        </div>
+
+        <!-- 2. Create Admin -->
+        <div id="admin-section" class="form-container">
+            <h3 class="section-title">Create New Admin</h3>
+            <form onsubmit="handleFormSubmit(event, '/superadmin/admins')">
+                <div class="form-group">
+                    <label for="admin-name">Admin Name</label>
+                    <input id="admin-name" type="text" name="name" required>
+                </div>
+                <div class="form-group">
+                    <label for="admin-email">Admin Email</label>
+                    <input id="admin-email" type="email" name="email" placeholder="user@nitte.edu.in" required>
+                </div>
+                <div class="form-group">
+                    <label for="admin-password">Password</label>
+                    <input id="admin-password" type="password" name="password" required>
+                </div>
+                <div class="form-group">
+                    <label for="admin-dept-id">Assign to Department ID</label>
+                    <input id="admin-dept-id" type="number" name="department_id" min="1" required>
+                </div>
+                <button type="submit" class="submit-btn">Create Admin</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/superadmin-dashboard.js"></script>
+</body>
+</html>
