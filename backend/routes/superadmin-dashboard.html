@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Admin Dashboard - OEMS</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body class="super-admin-body">
+
+    <div class="sidebar super-admin">
+        <h2>OEMS Control</h2>
+        <button type="button" data-section="dashboard" onclick="showSection('dashboard')" class="active"><i class="fas fa-tachometer-alt fa-fw"></i> Dashboard</button>
+        <button type="button" data-section="departments" onclick="showSection('departments')"><i class="fas fa-building fa-fw"></i> Departments</button>
+        <button type="button" data-section="admins" onclick="showSection('admins')"><i class="fas fa-user-shield fa-fw"></i> Admins</button>
+        <button type="button" data-section="logs" onclick="showSection('logs')"><i class="fas fa-clipboard-list fa-fw"></i> System Logs</button>
+        <button type="button" onclick="logout()" class="logout"><i class="fas fa-sign-out-alt fa-fw"></i> Logout</button>
+    </div>
+
+    <div class="content">
+        <header class="top-navbar super-admin">
+            <div class="app-logo">OEMS &ndash; Super Admin</div>
+            <div class="user-profile">
+                <span id="nav-user" class="user-name">Loading...</span>
+                <span id="nav-designation" class="role-badge"></span>
+                <button onclick="logout()" class="nav-logout-btn">Logout</button>
+            </div>
+        </header>
+
+        <div class="main-scrollable-content">
+            <!-- 1. Dashboard Overview -->
+            <div id="dashboard-section" class="form-container active" style="background: transparent; border: none; box-shadow: none; padding: 0;">
+                <div class="sa-dashboard-grid" id="sa-stats-container">
+                    <!-- Populated by JS -->
+                    <div class="spinner"></div>
+                </div>
+            </div>
+
+            <!-- 2. Manage Departments -->
+            <div id="departments-section" class="form-container">
+                <div class="sa-card">
+                    <div class="sa-card-header">
+                        <h3 class="sa-card-title">Create New Department</h3>
+                    </div>
+                    <form id="create-department-form" class="sa-form">
+                        <div class="form-group" style="flex-grow: 3;"><label for="dept-name">Department Name</label><input id="dept-name" type="text" name="name" required></div>
+                        <div class="form-actions"><button type="submit" class="submit-btn">Create Department</button></div>
+                    </form>
+                </div>
+
+                <div class="sa-card">
+                    <div class="sa-card-header"><h3 class="sa-card-title">Existing Departments</h3></div>
+                    <table class="sa-table" id="departments-table">
+                        <thead><tr><th>Department Name</th><th>Admin Assigned</th><th>Created At</th><th>Actions</th></tr></thead>
+                        <tbody id="departments-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 3. Manage Admins -->
+            <div id="admins-section" class="form-container">
+                <div class="sa-card">
+                    <div class="sa-card-header"><h3 class="sa-card-title">Manage Department Admins</h3></div>
+                    <table class="sa-table" id="admins-table">
+                        <thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Status</th><th>Actions</th></tr></thead>
+                        <tbody id="admins-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 4. System Logs -->
+            <div id="logs-section" class="form-container">
+                 <div class="sa-card">
+                    <div class="sa-card-header"><h3 class="sa-card-title">Global System Logs</h3></div>
+                    <!-- Filters -->
+                    <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <div class="form-group" style="min-width: 150px;"><label for="log-start-date">Start Date</label><input type="date" id="log-start-date" onchange="loadSystemLogs()"></div>
+                        <div class="form-group" style="min-width: 150px;"><label for="log-end-date">End Date</label><input type="date" id="log-end-date" onchange="loadSystemLogs()"></div>
+                        <div class="form-group" style="min-width: 150px;"><label for="log-action-type">Action Type</label><select id="log-action-type" onchange="loadSystemLogs()"><option value="">All</option><option value="Create">Create</option><option value="Update">Update</option><option value="Delete">Delete</option><option value="Publish">Publish</option></select></div>
+                        <div class="form-group" style="min-width: 200px;"><label for="log-search">Search Logs</label><input type="text" id="log-search" placeholder="Search action or entity..." onkeyup="loadSystemLogs()"></div>
+                    </div>
+                    <table id="system-logs-table">
+                        <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Entity</th><th>IP Address</th></tr></thead>
+                        <tbody id="system-logs-body"></tbody>
+                    </table>
+                    <div id="logs-pagination-controls" style="margin-top: 15px; display: flex; justify-content: center; gap: 5px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="sa-modal-container">
+        <!-- Create/Edit Admin Modal -->
+        <div id="admin-modal" class="sa-modal">
+            <div class="sa-modal-content">
+                <div class="sa-modal-header">
+                    <h3 id="admin-modal-title" class="sa-modal-title">Create Admin</h3>
+                    <button class="sa-modal-close" onclick="closeModal('admin-modal')">&times;</button>
+                </div>
+                <form id="admin-form">
+                    <input type="hidden" name="admin_id">
+                    <div class="form-group"><label for="admin-name">Name</label><input id="admin-name" type="text" name="name" required></div>
+                    <div class="form-group"><label for="admin-email">Email</label><input id="admin-email" type="email" name="email" required></div>
+                    <div class="form-group"><label for="admin-password">Password</label><input id="admin-password" type="password" name="password" required></div>
+                    <div class="form-group"><label for="admin-department">Department</label><select id="admin-department" name="department_id" required></select></div>
+                    <div class="form-actions" style="justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="submit-btn btn-secondary" onclick="closeModal('admin-modal')">Cancel</button>
+                        <button type="submit" class="submit-btn">Save Admin</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Edit Department Modal -->
+        <div id="department-edit-modal" class="sa-modal">
+            <div class="sa-modal-content">
+                <div class="sa-modal-header">
+                    <h3 class="sa-modal-title">Edit Department</h3>
+                    <button class="sa-modal-close" onclick="closeModal('department-edit-modal')">&times;</button>
+                </div>
+                <form id="department-edit-form">
+                    <input type="hidden" name="department_id">
+                    <div class="form-group"><label for="department-edit-name">Department Name</label><input id="department-edit-name" type="text" name="name" required></div>
+                    <div class="form-actions" style="justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="submit-btn btn-secondary" onclick="closeModal('department-edit-modal')">Cancel</button>
+                        <button type="submit" class="submit-btn">Update</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Reset Password Modal -->
+        <div id="reset-password-modal" class="sa-modal">
+            <div class="sa-modal-content">
+                <div class="sa-modal-header">
+                    <h3 class="sa-modal-title">Reset Admin Password</h3>
+                    <button class="sa-modal-close" onclick="closeModal('reset-password-modal')">&times;</button>
+                </div>
+                <form id="reset-password-form">
+                    <input type="hidden" name="admin_id">
+                    <p>Enter a new password for <strong id="reset-admin-name"></strong>.</p>
+                    <div class="form-group"><label for="reset-password-input">New Password</label><input id="reset-password-input" type="password" name="password" required></div>
+                    <div class="form-actions" style="justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="submit-btn btn-secondary" onclick="closeModal('reset-password-modal')">Cancel</button>
+                        <button type="submit" class="submit-btn">Reset Password</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Delete Confirmation Modal -->
+        <div id="delete-confirm-modal" class="sa-modal">
+            <div class="sa-modal-content" style="text-align: center;">
+                <h3 class="sa-modal-title">Confirm Deletion</h3>
+                <p id="delete-confirm-message" style="margin: 20px 0;"></p>
+                <div class="form-actions" style="justify-content: center;">
+                    <button type="button" class="submit-btn btn-secondary" onclick="closeModal('delete-confirm-modal')">Cancel</button>
+                    <button type="button" id="confirm-delete-btn" class="submit-btn" style="background-color: #DC2626;">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/superadmin-auth.js"></script>
+    <script src="js/superadmin-dashboard.js"></script>
+</body>
+</html>

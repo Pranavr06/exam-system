@@ -24,6 +24,10 @@ def admin_login(email: str, password: str):
     if not admin:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    # ✅ Check active status
+    if "is_active" in admin and admin["is_active"] == 0:
+        raise HTTPException(status_code=403, detail="Account disabled. Contact Super Admin.")
+
     if not pwd_context.verify(password, admin["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 

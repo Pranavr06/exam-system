@@ -7,6 +7,28 @@ import mysql.connector
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+@router.get("/admin/profile")
+def get_admin_profile(user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT a.name, a.email, d.department_name 
+            FROM admin a
+            JOIN department d ON a.department_id = d.department_id
+            WHERE a.admin_id = %s
+        """, (user["user_id"],))
+        profile = cursor.fetchone()
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return profile
+    finally:
+        cursor.close()
+        conn.close()
+
 @router.post("/admin/teachers/create")
 def create_teacher(
     name: str = Body(...),
@@ -117,7 +139,12 @@ def create_student(
         conn.close()
 
 @router.get("/admin/students")
-def get_students(user=Depends(get_current_user)):
+def get_students(
+    semester: int = None,
+    section_id: int = None,
+    search: str = None,
+    user=Depends(get_current_user)
+):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -130,9 +157,28 @@ def get_students(user=Depends(get_current_user)):
         if not admin_row or not admin_row["department_id"]:
             raise HTTPException(status_code=400, detail="Admin not assigned to department")
         
-        cursor.execute("SELECT student_id, name, email, usn, semester, section_label FROM student WHERE department_id = %s", (admin_row["department_id"],))
-        students = cursor.fetchall()
-        return students
+        query = """
+            SELECT s.student_id, s.name, s.email, s.usn, s.semester, sec.section_name
+            FROM student s
+            LEFT JOIN section sec ON s.section_id = sec.section_id
+            WHERE s.department_id = %s
+        """
+        params = [admin_row["department_id"]]
+
+        if semester:
+            query += " AND s.semester = %s"
+            params.append(semester)
+        if section_id:
+            query += " AND s.section_id = %s"
+            params.append(section_id)
+        if search:
+            query += " AND (s.name LIKE %s OR s.usn LIKE %s)"
+            params.extend([f"%{search}%", f"%{search}%"])
+
+        query += " ORDER BY s.semester, sec.section_name, s.name LIMIT 500"
+        
+        cursor.execute(query, tuple(params))
+        return cursor.fetchall()
     finally:
         cursor.close()
         conn.close()
@@ -298,6 +344,185 @@ def update_student(
         return {"message": "Student updated successfully"}
     except mysql.connector.IntegrityError:
         raise HTTPException(status_code=400, detail="Email or USN already exists")
+    finally:
+        cursor.close()
+        conn.close()
+
+# --- Teaching Assignments ---
+
+@router.post("/admin/assignments/create")
+def create_assignment(
+    teacher_id: int = Body(...),
+    subject_id: int = Body(...),
+    section_id: int = Body(...),
+    user=Depends(get_current_user)
+):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        # Get Admin Department
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_dept = cursor.fetchone()["department_id"]
+
+        # Validate that Teacher, Subject, and Section belong to this department
+        # (This is a simplified check; in production, you might query each table individually for better error messages)
+        cursor.execute("SELECT department_id FROM teacher WHERE teacher_id = %s", (teacher_id,))
+        t_row = cursor.fetchone()
+        cursor.execute("SELECT department_id FROM subject WHERE subject_id = %s", (subject_id,))
+        sub_row = cursor.fetchone()
+        cursor.execute("SELECT department_id FROM section WHERE section_id = %s", (section_id,))
+        sec_row = cursor.fetchone()
+
+        if not (t_row and sub_row and sec_row):
+             raise HTTPException(status_code=404, detail="One or more selected entities not found")
+        
+        if not (t_row["department_id"] == sub_row["department_id"] == sec_row["department_id"] == admin_dept):
+             raise HTTPException(status_code=403, detail="All entities must belong to your department")
+
+        # Insert Assignment
+        cursor.execute(
+            """INSERT INTO teaching_assignment (teacher_id, subject_id, section_id, department_id) 
+               VALUES (%s, %s, %s, %s)""",
+            (teacher_id, subject_id, section_id, admin_dept)
+        )
+        conn.commit()
+        return {"message": "Class assigned successfully"}
+
+    except mysql.connector.IntegrityError:
+        raise HTTPException(status_code=400, detail="This assignment already exists")
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/admin/assignments")
+def get_assignments(
+    semester: int = None,
+    section_id: int = None,
+    teacher_id: int = None,
+    subject_id: int = None,
+    search: str = None,
+    user=Depends(get_current_user)
+):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_dept = cursor.fetchone()["department_id"]
+
+        query = """
+            SELECT ta.assignment_id, t.name as teacher_name, s.subject_name, sec.section_name, sec.semester
+            FROM teaching_assignment ta
+            JOIN teacher t ON ta.teacher_id = t.teacher_id
+            JOIN subject s ON ta.subject_id = s.subject_id
+            JOIN section sec ON ta.section_id = sec.section_id
+            WHERE ta.department_id = %s
+        """
+        params = [admin_dept]
+
+        if semester:
+            query += " AND sec.semester = %s"
+            params.append(semester)
+        if section_id:
+            query += " AND ta.section_id = %s"
+            params.append(section_id)
+        if teacher_id:
+            query += " AND ta.teacher_id = %s"
+            params.append(teacher_id)
+        if subject_id:
+            query += " AND ta.subject_id = %s"
+            params.append(subject_id)
+        if search:
+            query += " AND (t.name LIKE %s OR s.subject_name LIKE %s)"
+            params.extend([f"%{search}%", f"%{search}%"])
+
+        query += " ORDER BY sec.semester, sec.section_name, t.name"
+        
+        cursor.execute(query, tuple(params))
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/admin/assignments/{assignment_id}")
+def get_assignment(assignment_id: int, user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_dept = cursor.fetchone()["department_id"]
+        
+        cursor.execute("SELECT * FROM teaching_assignment WHERE assignment_id = %s AND department_id = %s", (assignment_id, admin_dept))
+        assignment = cursor.fetchone()
+        if not assignment:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        return assignment
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.put("/admin/assignments/{assignment_id}")
+def update_assignment(
+    assignment_id: int,
+    teacher_id: int = Body(...),
+    subject_id: int = Body(...),
+    section_id: int = Body(...),
+    user=Depends(get_current_user)
+):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_dept = cursor.fetchone()["department_id"]
+
+        cursor.execute(
+            """UPDATE teaching_assignment 
+               SET teacher_id=%s, subject_id=%s, section_id=%s 
+               WHERE assignment_id=%s AND department_id=%s""",
+            (teacher_id, subject_id, section_id, assignment_id, admin_dept)
+        )
+        
+        if cursor.rowcount == 0:
+             raise HTTPException(status_code=404, detail="Assignment not found or no changes made")
+
+        conn.commit()
+        return {"message": "Assignment updated successfully"}
+    except mysql.connector.IntegrityError:
+        raise HTTPException(status_code=400, detail="This assignment already exists")
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.delete("/admin/assignments/{assignment_id}")
+def delete_assignment(assignment_id: int, user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_dept = cursor.fetchone()["department_id"]
+
+        cursor.execute("DELETE FROM teaching_assignment WHERE assignment_id = %s AND department_id = %s", (assignment_id, admin_dept))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        conn.commit()
+        return {"message": "Assignment removed"}
     finally:
         cursor.close()
         conn.close()

@@ -10,12 +10,14 @@ from routes.super_admin_actions import router as super_admin_actions_router
 from routes.admin_users import router as admin_users_router
 from routes.admin_subjects import router as admin_subject_router
 from routes.admin_exam import router as admin_exam_router
-from routes.teacher_exam import router as teacher_exam_router
 from routes.exam_assignment import router as exam_assignment_router
 from routes.student_exam import router as student_exam_router
 from routes.student_attempt import router as student_attempt_router
 from routes.review import router as review_router
 from routes.violation import router as violation_router
+from routes.teacher_routes import router as teacher_dashboard_router
+from routes.admin_dashboard import router as admin_dashboard_router
+from routes.student_dashboard import router as student_dashboard_router
 
 app = FastAPI(title="OEMS API")
 
@@ -35,12 +37,14 @@ app.include_router(super_admin_actions_router)
 app.include_router(admin_users_router)
 app.include_router(admin_subject_router)
 app.include_router(admin_exam_router)
-app.include_router(teacher_exam_router)
 app.include_router(exam_assignment_router)
 app.include_router(student_exam_router)
 app.include_router(student_attempt_router)
 app.include_router(review_router)
 app.include_router(violation_router)
+app.include_router(teacher_dashboard_router)
+app.include_router(admin_dashboard_router)
+app.include_router(student_dashboard_router)
 
 @app.get("/")
 def root():

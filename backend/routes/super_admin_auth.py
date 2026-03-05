@@ -30,5 +30,7 @@ def super_admin_login(email: str, password: str):
         "message": "Super Admin login successful",
         "access_token": token,
         "token_type": "bearer",
-        "super_admin_id": super_admin["super_admin_id"]
+        "super_admin_id": super_admin["super_admin_id"],
+        "name": super_admin["name"],
+        "designation": super_admin.get("designation", "Super Admin")
     }

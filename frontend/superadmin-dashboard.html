@@ -5,51 +5,359 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Super Admin Dashboard - OEMS</title>
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body>
+<body class="super-admin-body">
 
-    <div class="sidebar">
-        <h2>Super Admin</h2>
-        <button type="button" data-section="department" onclick="showSection('department')" class="active">Create Department</button>
-        <button type="button" data-section="admin" onclick="showSection('admin')">Create Admin</button>
-        <button type="button" onclick="logout()" class="logout" data-section="logout">Logout</button>
+    <div class="sidebar super-admin">
+        <h2>OEMS Control</h2>
+        <button type="button" data-section="dashboard" onclick="showSection('dashboard')" class="active"><i class="fas fa-tachometer-alt fa-fw"></i> Dashboard</button>
+        <button type="button" data-section="departments" onclick="showSection('departments')"><i class="fas fa-building fa-fw"></i> Departments</button>
+        <button type="button" data-section="admins" onclick="showSection('admins')"><i class="fas fa-user-shield fa-fw"></i> Admins</button>
+        <button type="button" data-section="teachers" onclick="showSection('teachers')"><i class="fas fa-chalkboard-teacher fa-fw"></i> Teachers</button>
+        <button type="button" data-section="students" onclick="showSection('students')"><i class="fas fa-user-graduate fa-fw"></i> Students</button>
+        <button type="button" data-section="violations" onclick="showSection('violations')"><i class="fas fa-exclamation-triangle fa-fw"></i> Violations</button>
+        <button type="button" data-section="exams" onclick="showSection('exams')"><i class="fas fa-file-alt fa-fw"></i> Exams</button>
+        <button type="button" data-section="logs" onclick="showSection('logs')"><i class="fas fa-clipboard-list fa-fw"></i> System Logs</button>
+        <button type="button" onclick="logout()" class="logout"><i class="fas fa-sign-out-alt fa-fw"></i> Logout</button>
     </div>
 
     <div class="content">
-        <!-- 1. Create Department -->
-        <div id="department-section" class="form-container active">
-            <h3 class="section-title">Create New Department</h3>
-            <form onsubmit="handleFormSubmit(event, '/superadmin/departments')">
-                <div class="form-group">
-                    <label for="dept-name">Department Name</label>
-                    <input id="dept-name" type="text" name="name" required>
+        <header class="top-navbar super-admin">
+            <div class="app-logo">OEMS &ndash; Super Admin</div>
+            <div class="user-profile">
+                <span id="nav-user" class="user-name">Loading...</span>
+                <span id="nav-designation" class="role-badge"></span>
+                <button onclick="logout()" class="nav-logout-btn">Logout</button>
+            </div>
+        </header>
+
+        <div class="main-scrollable-content">
+            <!-- 1. Dashboard Overview -->
+            <div id="dashboard-section" class="form-container active" style="background: transparent; border: none; box-shadow: none; padding: 0;">
+                <div class="sa-dashboard-grid" id="sa-stats-container">
+                    <!-- Populated by JS -->
+                    <div class="spinner"></div>
                 </div>
-                <button type="submit" class="submit-btn">Create Department</button>
-            </form>
+
+                <!-- MIDDLE: Charts Row -->
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-top: 30px; flex-wrap: wrap;">
+                    <!-- Academic Performance Chart -->
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Academic Performance</h3></div>
+                        <canvas id="deptPerformanceChart" style="max-height: 300px;"></canvas>
+                    </div>
+
+                    <!-- Violation Monitoring Chart -->
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Violation Monitoring</h3></div>
+                        <div style="display: flex; gap: 20px;">
+                            <div style="flex: 1;"><canvas id="violationChart" style="max-height: 250px;"></canvas></div>
+                            <div style="flex: 1; display: flex; flex-direction: column; justify-content: center;" id="violation-stats-text"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TEACHER & STUDENT ANALYTICS -->
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-top: 30px; flex-wrap: wrap;">
+                    <!-- Teacher Activity -->
+                    <div class="sa-card" style="flex: 2; min-width: 400px; margin-top: 0;">
+                        <div class="sa-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3 class="sa-card-title">Teacher Activity</h3>
+                            <span class="status-badge active" id="active-teachers-badge">0 Active Today</span>
+                        </div>
+                        <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                            <div style="flex: 1; min-width: 200px;">
+                                <canvas id="teacherActivityChart" style="max-height: 200px;"></canvas>
+                            </div>
+                            <div style="flex: 1.5; min-width: 300px;">
+                                <table class="sa-table" id="teacher-overview-table" style="margin-top: 0;">
+                                    <thead><tr><th>Name</th><th>Dept</th><th>Subjects</th><th>Exams</th></tr></thead>
+                                    <tbody id="teacher-overview-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Student Performance Distribution -->
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Student Grade Dist.</h3></div>
+                        <canvas id="studentDistChart" style="max-height: 250px;"></canvas>
+                    </div>
+                </div>
+
+                <!-- BOTTOM: Activity & Monitoring -->
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-top: 30px; flex-wrap: wrap;">
+                    
+                    <!-- Left Column: Active Exams & Violations List -->
+                    <div style="flex: 2; min-width: 350px; display: flex; flex-direction: column; gap: 24px;">
+                         <!-- Active Exams -->
+                         <div class="sa-card" style="margin-top: 0;">
+                             <div class="sa-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                                 <h3 class="sa-card-title">Live Exam Activity</h3>
+                                 <span class="status-badge active" id="students-writing-badge">0 Students Writing</span>
+                             </div>
+                             <table class="sa-table" id="active-exams-table">
+                                 <thead><tr><th>Exam</th><th>Department</th><th>Time</th><th>Sections</th></tr></thead>
+                                 <tbody id="active-exams-body"></tbody>
+                             </table>
+                         </div>
+
+                         <!-- Recent Violations Table -->
+                         <div class="sa-card" style="margin-top: 0; border-left: 4px solid #DC2626;">
+                             <div class="sa-card-header"><h3 class="sa-card-title" style="color: #DC2626;">Recent Violations</h3></div>
+                             <div id="recent-violations-list" class="activity-feed"></div>
+                         </div>
+                    </div>
+
+                    <!-- Right Column: System Activity & Health -->
+                    <div style="flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 24px;">
+                        <div class="sa-card" style="margin-top: 0; flex-grow: 1;">
+                            <div class="sa-card-header"><h3 class="sa-card-title">System Activity Feed</h3></div>
+                            <div id="system-activity-feed" class="activity-feed" style="max-height: 600px;"></div>
+                        </div>
+                        <div class="sa-card" style="margin-top: 0;" id="dept-health-card"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Manage Departments -->
+            <div id="departments-section" class="form-container">
+                <div class="sa-card">
+                    <div class="sa-card-header">
+                        <h3 class="sa-card-title">Create New Department</h3>
+                    </div>
+                    <form id="department-form" class="sa-form">
+                        <input type="hidden" name="department_id">
+                        <div class="form-group" style="flex-grow: 3;"><label for="dept-name">Department Name</label><input id="dept-name" type="text" name="name" required></div>
+                        <div class="form-actions"><button type="submit" class="submit-btn">Create Department</button>
+                        <button type="button" class="submit-btn btn-secondary" style="display: none;" onclick="resetDepartmentForm()">Cancel</button></div>
+                    </form>
+                </div>
+
+                <div class="sa-card">
+                    <div class="sa-card-header"><h3 class="sa-card-title">Existing Departments</h3></div>
+                    <table class="sa-table" id="departments-table">
+                        <thead><tr><th>Department Name</th><th>Admin Assigned</th><th>Created At</th><th>Actions</th></tr></thead>
+                        <tbody id="departments-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 3. Manage Admins -->
+            <div id="admins-section" class="form-container">
+                <div class="sa-card">
+                    <div class="sa-card-header">
+                        <h3 class="sa-card-title">Create New Admin</h3>
+                    </div>
+                    <form id="admin-form" class="sa-form">
+                        <input type="hidden" name="admin_id">
+                        <div class="form-group"><label for="admin-name">Name</label><input id="admin-name" type="text" name="name" required></div>
+                        <div class="form-group"><label for="admin-email">Email</label><input id="admin-email" type="email" name="email" required></div>
+                        <div class="form-group"><label for="admin-password">Password</label><input id="admin-password" type="password" name="password" required></div>
+                        <div class="form-group"><label for="admin-department">Department</label><select id="admin-department" name="department_id" required></select></div>
+                        <div class="form-actions"><button type="submit" class="submit-btn">Save Admin</button>
+                        <button type="button" class="submit-btn btn-secondary" style="display: none;" onclick="resetAdminForm()">Cancel</button></div>
+                    </form>
+                </div>
+                <div class="sa-card">
+                    <div class="sa-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h3 class="sa-card-title">Manage Department Admins</h3>
+                    </div>
+                    <table class="sa-table" id="admins-table">
+                        <thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Status</th><th>Actions</th></tr></thead>
+                        <tbody id="admins-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 4. Teachers Section -->
+            <div id="teachers-section" class="form-container">
+                <div class="sa-card">
+                    <div class="sa-card-header"><h3 class="sa-card-title">Teacher Directory & Activity</h3></div>
+                    <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <div class="form-group" style="min-width: 150px;"><label for="teacher-filter-dept">Department</label><select id="teacher-filter-dept" onchange="loadAllTeachers()"><option value="">All</option></select></div>
+                        <div class="form-group" style="min-width: 200px;"><label for="teacher-filter-search">Search</label><input type="text" id="teacher-filter-search" placeholder="Name or Email..." onkeyup="loadAllTeachers()"></div>
+                    </div>
+                    <table class="sa-table" id="all-teachers-table">
+                        <thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Exams Created</th><th>Status</th></tr></thead>
+                        <tbody id="all-teachers-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 5. Students Section (Analytics & Monitoring) -->
+            <div id="students-section" class="form-container">
+                <h3 class="section-title">Student Analytics & Monitoring</h3>
+                
+                <!-- Student Stats Cards -->
+                <div class="sa-dashboard-grid" id="student-stats-container" style="margin-bottom: 30px;">
+                    <!-- Populated by JS -->
+                    <div class="spinner"></div>
+                </div>
+
+                <!-- Student Charts Row -->
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-bottom: 30px; flex-wrap: wrap;">
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Department-wise Student Strength</h3></div>
+                        <canvas id="deptStrengthChart" style="max-height: 250px;"></canvas>
+                    </div>
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Exam Participation Rate</h3></div>
+                        <canvas id="participationChart" style="max-height: 250px;"></canvas>
+                    </div>
+                </div>
+
+                <!-- Student Overview Table -->
+                <div class="sa-card" style="margin-top: 0;">
+                    <div class="sa-card-header"><h3 class="sa-card-title">Student Overview</h3></div>
+                    
+                    <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <div class="form-group" style="min-width: 150px;">
+                            <label for="student-filter-dept">Department</label>
+                            <select id="student-filter-dept" onchange="loadAllStudents()"><option value="">All</option></select>
+                        </div>
+                        <div class="form-group" style="min-width: 200px;">
+                            <label for="student-filter-search">Search</label>
+                            <input type="text" id="student-filter-search" placeholder="Name or USN..." onkeyup="loadAllStudents()">
+                        </div>
+                    </div>
+
+                    <table class="sa-table" id="all-students-table">
+                        <thead><tr><th>Student Name</th><th>Dept</th><th>Exams Taken</th><th>Avg Score</th><th>Violations</th></tr></thead>
+                        <tbody id="all-students-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 6. Violations Section (Integrity Monitoring) -->
+            <div id="violations-section" class="form-container">
+                <h3 class="section-title">Exam Integrity & Violation Monitoring</h3>
+                
+                <!-- Summary Cards -->
+                <div class="sa-dashboard-grid" id="violation-summary-cards">
+                    <div class="spinner"></div>
+                </div>
+                
+                <!-- Charts Row 1 -->
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-top: 30px; flex-wrap: wrap;">
+                    <div class="sa-card" style="flex: 2; min-width: 400px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Violation Trend (Last 7 Days)</h3></div>
+                        <canvas id="violationTrendChart" style="max-height: 300px;"></canvas>
+                    </div>
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Violations by Department</h3></div>
+                        <canvas id="violationDeptChart" style="max-height: 300px;"></canvas>
+                    </div>
+                </div>
+
+                <!-- Charts Row 2 & Alerts -->
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-top: 30px; flex-wrap: wrap;">
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Violation Types</h3></div>
+                        <canvas id="violationTypeChart" style="max-height: 250px;"></canvas>
+                    </div>
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0; border-left: 4px solid #F59E0B;">
+                        <div class="sa-card-header"><h3 class="sa-card-title" style="color: #B45309;">Integrity Alerts</h3></div>
+                        <div id="violation-alerts-container" class="activity-feed"></div>
+                    </div>
+                </div>
+
+                <!-- Tables Row -->
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-top: 30px; flex-wrap: wrap;">
+                    <div class="sa-card" style="flex: 2; min-width: 400px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Recent Violations</h3></div>
+                        <table class="sa-table" id="recent-violations-full-table">
+                            <thead><tr><th>Student</th><th>Dept</th><th>Exam</th><th>Violation</th><th>Time</th></tr></thead>
+                            <tbody id="recent-violations-full-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">High Risk Students</h3></div>
+                        <table class="sa-table" id="high-risk-students-table">
+                            <thead><tr><th>Student</th><th>Count</th></tr></thead>
+                            <tbody id="high-risk-students-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. Global Exam Monitoring -->
+            <div id="exams-section" class="form-container">
+                <div class="sa-card">
+                    <div class="sa-card-header"><h3 class="sa-card-title">Global Exam Monitoring</h3></div>
+                    <!-- Filters -->
+                    <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <div class="form-group" style="min-width: 150px;"><label for="exam-filter-dept">Department</label><select id="exam-filter-dept" onchange="loadAllExams()"><option value="">All</option></select></div>
+                        <div class="form-group" style="min-width: 150px;">
+                            <label for="exam-filter-status">Status</label>
+                            <select id="exam-filter-status" onchange="loadAllExams()">
+                                <option value="">All</option><option value="scheduled">Scheduled</option><option value="active">Active</option><option value="completed">Completed</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="min-width: 200px;"><label for="exam-filter-search">Search</label><input type="text" id="exam-filter-search" placeholder="Exam or Subject..." onkeyup="loadAllExams()"></div>
+                    </div>
+                    <table class="sa-table" id="all-exams-table">
+                        <thead><tr><th>Exam Name</th><th>Department</th><th>Subject</th><th>Batch/Sem</th><th>Created By</th><th>Status</th><th>Date</th></tr></thead>
+                        <tbody id="all-exams-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 4. System Logs -->
+            <div id="logs-section" class="form-container">
+                 <div class="sa-card">
+                    <div class="sa-card-header"><h3 class="sa-card-title">Global System Logs</h3></div>
+                    <!-- Filters -->
+                    <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <div class="form-group" style="min-width: 150px;"><label for="log-start-date">Start Date</label><input type="date" id="log-start-date" onchange="loadSystemLogs()"></div>
+                        <div class="form-group" style="min-width: 150px;"><label for="log-end-date">End Date</label><input type="date" id="log-end-date" onchange="loadSystemLogs()"></div>
+                        <div class="form-group" style="min-width: 150px;"><label for="log-action-type">Action Type</label><select id="log-action-type" onchange="loadSystemLogs()"><option value="">All</option><option value="Create">Create</option><option value="Update">Update</option><option value="Delete">Delete</option><option value="Publish">Publish</option></select></div>
+                        <div class="form-group" style="min-width: 200px;"><label for="log-search">Search Logs</label><input type="text" id="log-search" placeholder="Search action or entity..." onkeyup="loadSystemLogs()"></div>
+                    </div>
+                    <table id="system-logs-table">
+                        <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Entity</th><th>IP Address</th></tr></thead>
+                        <tbody id="system-logs-body"></tbody>
+                    </table>
+                    <div id="logs-pagination-controls" style="margin-top: 15px; display: flex; justify-content: center; gap: 5px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="sa-modal-container">
+
+        <!-- Reset Password Modal -->
+        <div id="reset-password-modal" class="sa-modal">
+            <div class="sa-modal-content">
+                <div class="sa-modal-header">
+                    <h3 class="sa-modal-title">Reset Admin Password</h3>
+                    <button class="sa-modal-close" onclick="closeModal('reset-password-modal')">&times;</button>
+                </div>
+                <form id="reset-password-form">
+                    <input type="hidden" name="admin_id">
+                    <p>Enter a new password for <strong id="reset-admin-name"></strong>.</p>
+                    <div class="form-group"><label for="reset-password-input">New Password</label><input id="reset-password-input" type="password" name="password" required></div>
+                    <div class="form-actions" style="justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="submit-btn btn-secondary" onclick="closeModal('reset-password-modal')">Cancel</button>
+                        <button type="submit" class="submit-btn">Reset Password</button>
+                    </div>
+                </form>
+            </div>
         </div>
 
-        <!-- 2. Create Admin -->
-        <div id="admin-section" class="form-container">
-            <h3 class="section-title">Create New Admin</h3>
-            <form onsubmit="handleFormSubmit(event, '/superadmin/admins')">
-                <div class="form-group">
-                    <label for="admin-name">Admin Name</label>
-                    <input id="admin-name" type="text" name="name" required>
+        <!-- Delete Confirmation Modal -->
+        <div id="delete-confirm-modal" class="sa-modal">
+            <div class="sa-modal-content" style="text-align: center;">
+                <h3 class="sa-modal-title">Confirm Deletion</h3>
+                <p id="delete-confirm-message" style="margin: 20px 0;"></p>
+                <div class="form-actions" style="justify-content: center;">
+                    <button type="button" class="submit-btn btn-secondary" onclick="closeModal('delete-confirm-modal')">Cancel</button>
+                    <button type="button" id="confirm-delete-btn" class="submit-btn" style="background-color: #DC2626;">Delete</button>
                 </div>
-                <div class="form-group">
-                    <label for="admin-email">Admin Email</label>
-                    <input id="admin-email" type="email" name="email" placeholder="user@nitte.edu.in" required>
-                </div>
-                <div class="form-group">
-                    <label for="admin-password">Password</label>
-                    <input id="admin-password" type="password" name="password" required>
-                </div>
-                <div class="form-group">
-                    <label for="admin-dept-id">Assign to Department ID</label>
-                    <input id="admin-dept-id" type="number" name="department_id" min="1" required>
-                </div>
-                <button type="submit" class="submit-btn">Create Admin</button>
-            </form>
+            </div>
         </div>
     </div>
 

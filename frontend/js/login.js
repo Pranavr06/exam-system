@@ -30,6 +30,10 @@ async function login(event) {
         localStorage.setItem("access_token", data.access_token);
         localStorage.setItem("role", normalizedRole);
         localStorage.setItem("user_id", data.super_admin_id || data.admin_id || data.teacher_id || data.student_id);
+        localStorage.setItem("userProfile", JSON.stringify({
+            name: data.name,
+            designation: data.designation || (normalizedRole === 'admin' ? 'Department Admin' : normalizedRole)
+        }));
 
         if (normalizedRole === "super_admin") {
             window.location.href = "superadmin-dashboard.html";

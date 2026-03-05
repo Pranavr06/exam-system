@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, Request
 from db import get_connection
 from security import get_current_user
+from .system_logger import log_action
 import mysql.connector
 
 router = APIRouter()
@@ -8,17 +9,26 @@ router = APIRouter()
 
 @router.post("/admin/exams/create")
 def create_exam(
+    request: Request,
     exam_name: str = Body(...),
     subject_id: int = Body(...),
     duration: int = Body(...),
+    total_marks: int = Body(...),
     exam_date: str = Body(...),
     exam_scope: str = Body("DEPARTMENT"),
+    batch_year: int = Body(None),
+    semester: int = Body(None),
     section_id: int = Body(None),
     user=Depends(get_current_user),
 ):
     # 🔒 role guard
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    if total_marks <= 0:
+        raise HTTPException(status_code=400, detail="Total marks must be greater than 0")
+    if total_marks > 100:
+        raise HTTPException(status_code=400, detail="Total marks cannot exceed 100")
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -65,6 +75,10 @@ def create_exam(
             
             if not section_row or section_row["department_id"] != department_id:
                 raise HTTPException(status_code=403, detail="Invalid section or section belongs to another department")
+        
+        if exam_scope == "BATCH":
+            if not batch_year or not semester:
+                raise HTTPException(status_code=400, detail="Batch Year and Semester are required for BATCH scope")
 
         # 🚨 DUPLICATE CHECK (backend layer)
         cursor.execute(
@@ -93,13 +107,16 @@ def create_exam(
                 subject_id,
                 date,
                 duration,
+                total_marks,
                 status,
                 created_by_admin,
                 created_by_teacher,
                 department_id,
-                exam_scope
+                exam_scope,
+                batch_year, # Store for display purposes
+                semester # Store for display purposes
             )
-            VALUES (%s, %s, %s, %s, 'scheduled', %s, NULL, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, 'scheduled', %s, NULL, %s, %s, %s, %s)
         """
 
         cursor.execute(
@@ -109,19 +126,34 @@ def create_exam(
                 subject_id,
                 formatted_date,
                 duration,
+                total_marks,
                 user["user_id"],
                 department_id,
                 exam_scope,
+                batch_year,
+                semester
             ),
         )
+        new_exam_id = cursor.lastrowid
+        log_action(user["user_id"], user["role"], department_id, f"Created Exam: {exam_name}", "exam", new_exam_id, ip_address=request.client.host)
         
         # ✅ If Scope is SECTION, assign it immediately
         if exam_scope == "SECTION" and section_id:
-            new_exam_id = cursor.lastrowid
             cursor.execute(
                 "INSERT INTO exam_section (exam_id, section_id) VALUES (%s, %s)",
                 (new_exam_id, section_id)
             )
+        
+        # ✅ If Scope is BATCH, find all sections and assign
+        if exam_scope == "BATCH":
+            cursor.execute("""
+                SELECT section_id FROM section 
+                WHERE department_id = %s AND batch_year = %s AND semester = %s
+            """, (department_id, batch_year, semester))
+            sections_to_assign = cursor.fetchall()
+            if sections_to_assign:
+                values = [(new_exam_id, s['section_id']) for s in sections_to_assign]
+                cursor.executemany("INSERT INTO exam_section (exam_id, section_id) VALUES (%s, %s)", values)
 
         conn.commit()
 
@@ -154,10 +186,15 @@ def get_exams(user=Depends(get_current_user)):
             raise HTTPException(status_code=400, detail="Admin not assigned to department")
         
         cursor.execute("""
-            SELECT exam_id, exam_name 
-            FROM exam 
-            WHERE department_id = %s 
-            ORDER BY date DESC
+            SELECT 
+                e.exam_id, e.exam_name, e.date, e.duration, e.total_marks, e.status, e.exam_scope, e.batch_year, e.semester,
+                GROUP_CONCAT(s.section_name SEPARATOR ', ') as section_details
+            FROM exam e
+            LEFT JOIN exam_section es ON e.exam_id = es.exam_id
+            LEFT JOIN section s ON es.section_id = s.section_id
+            WHERE e.department_id = %s 
+            GROUP BY e.exam_id
+            ORDER BY e.date DESC
         """, (admin_row["department_id"],))
         
         return cursor.fetchall()
@@ -170,7 +207,7 @@ def get_exams(user=Depends(get_current_user)):
 def add_question(
     exam_id: int = Body(...),
     question_text: str = Body(...),
-    marks: int = Body(1),
+    marks: float = Body(1.0),
     options: list = Body(...),  # List of {text: str, is_correct: bool}
     user=Depends(get_current_user),
 ):
@@ -179,6 +216,8 @@ def add_question(
 
     if marks > 4:
         raise HTTPException(status_code=400, detail="Marks cannot exceed 4")
+    if marks < 0.25:
+        raise HTTPException(status_code=400, detail="Marks cannot be less than 0.25")
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -214,9 +253,6 @@ def get_exam_questions_admin(
 ):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
-
-    if marks > 4:
-        raise HTTPException(status_code=400, detail="Marks cannot exceed 4")
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -330,7 +366,7 @@ def get_question(question_id: int, user=Depends(get_current_user)):
 def update_question(
     question_id: int,
     question_text: str = Body(...),
-    marks: int = Body(...),
+    marks: float = Body(...),
     options: list = Body(...),
     user=Depends(get_current_user)
 ):
@@ -385,7 +421,7 @@ def get_exam_assigned_sections(exam_id: int, user=Depends(get_current_user)):
 
     try:
         cursor.execute("""
-            SELECT s.section_id, s.section_name, s.semester
+            SELECT s.section_id, s.section_name, s.batch_year, s.semester
             FROM section s
             JOIN exam_section es ON s.section_id = es.section_id
             WHERE es.exam_id = %s
@@ -441,13 +477,22 @@ def update_exam(
     exam_name: str = Body(...),
     subject_id: int = Body(...),
     duration: int = Body(...),
+    total_marks: int = Body(...),
     exam_date: str = Body(...),
     exam_scope: str = Body("DEPARTMENT"),
     section_id: int = Body(None),
+    batch_year: int = Body(None),
+    semester: int = Body(None),
     user=Depends(get_current_user)
 ):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    if total_marks <= 0:
+        raise HTTPException(status_code=400, detail="Total marks must be greater than 0")
+    if total_marks > 100:
+        raise HTTPException(status_code=400, detail="Total marks cannot exceed 100")
+
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
@@ -457,11 +502,146 @@ def update_exam(
         formatted_date = exam_date.replace("T", " ")
         
         cursor.execute("""
-            UPDATE exam SET exam_name=%s, subject_id=%s, duration=%s, date=%s, exam_scope=%s 
+            UPDATE exam SET exam_name=%s, subject_id=%s, duration=%s, total_marks=%s, date=%s, exam_scope=%s, batch_year=%s, semester=%s 
             WHERE exam_id=%s AND department_id=%s
-        """, (exam_name, subject_id, duration, formatted_date, exam_scope, exam_id, admin_dept))
+        """, (exam_name, subject_id, duration, total_marks, formatted_date, exam_scope, batch_year, semester, exam_id, admin_dept))
         conn.commit()
         return {"message": "Exam updated successfully"}
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.post("/admin/exams/{exam_id}/publish")
+def publish_exam(exam_id: int, request: Request, user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        # 1. Get Exam Details
+        cursor.execute("SELECT total_marks, department_id FROM exam WHERE exam_id = %s", (exam_id,))
+        exam = cursor.fetchone()
+        if not exam:
+            raise HTTPException(status_code=404, detail="Exam not found")
+
+        # 2. Calculate Total Question Marks
+        cursor.execute("SELECT SUM(marks) as total_q_marks FROM question WHERE exam_id = %s", (exam_id,))
+        result = cursor.fetchone()
+        total_q_marks = result["total_q_marks"] or 0
+
+        # 3. Validate
+        if float(total_q_marks) != float(exam["total_marks"]):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Marks mismatch! Exam Total: {exam['total_marks']}, Questions Total: {total_q_marks}. Please adjust questions."
+            )
+
+        # 4. Publish
+        cursor.execute("UPDATE exam SET status = 'active' WHERE exam_id = %s", (exam_id,))
+        log_action(user["user_id"], user["role"], exam["department_id"], f"Published Exam ID: {exam_id}", "exam", exam_id, ip_address=request.client.host)
+
+        conn.commit()
+        return {"message": "Exam published successfully"}
+
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/admin/exams/{exam_id}/results")
+def get_exam_results(exam_id: int, user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        # Verify ownership/department
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_dept = cursor.fetchone()["department_id"]
+
+        cursor.execute("SELECT department_id FROM exam WHERE exam_id = %s", (exam_id,))
+        exam = cursor.fetchone()
+        if not exam or exam["department_id"] != admin_dept:
+             raise HTTPException(status_code=404, detail="Exam not found or access denied")
+
+        # Fetch results
+        cursor.execute("""
+            SELECT r.student_id, s.name, s.usn, r.total_marks, r.result_status, r.generated_time
+            FROM result r
+            JOIN student s ON r.student_id = s.student_id
+            WHERE r.exam_id = %s
+            ORDER BY r.total_marks DESC
+        """, (exam_id,))
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/admin/results/filter")
+def filter_results(
+    semester: int = None,
+    section_id: int = None,
+    subject_id: int = None,
+    teacher_id: int = None,
+    search: str = None,
+    user=Depends(get_current_user)
+):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_dept = cursor.fetchone()["department_id"]
+
+        query = """
+            SELECT 
+                r.result_id, 
+                s.name AS student_name, 
+                s.usn, 
+                s.semester,
+                sec.section_name,
+                e.exam_name, 
+                sub.subject_name, 
+                t.name AS teacher_name,
+                r.total_marks AS obtained_marks, 
+                e.total_marks AS max_marks, 
+                r.result_status,
+                r.generated_time
+            FROM result r
+            JOIN student s ON r.student_id = s.student_id
+            JOIN exam e ON r.exam_id = e.exam_id
+            JOIN subject sub ON e.subject_id = sub.subject_id
+            LEFT JOIN section sec ON s.section_id = sec.section_id
+            LEFT JOIN teacher t ON e.created_by_teacher = t.teacher_id
+            WHERE s.department_id = %s
+        """
+        params = [admin_dept]
+
+        if semester:
+            query += " AND s.semester = %s"
+            params.append(semester)
+        if section_id:
+            query += " AND s.section_id = %s"
+            params.append(section_id)
+        if subject_id:
+            query += " AND e.subject_id = %s"
+            params.append(subject_id)
+        if teacher_id:
+            query += " AND e.created_by_teacher = %s"
+            params.append(teacher_id)
+        if search:
+            query += " AND (s.name LIKE %s OR s.usn LIKE %s)"
+            params.extend([f"%{search}%", f"%{search}%"])
+
+        query += " ORDER BY r.generated_time DESC LIMIT 500"
+        cursor.execute(query, tuple(params))
+        return cursor.fetchall()
     finally:
         cursor.close()
         conn.close()

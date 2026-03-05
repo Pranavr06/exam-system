@@ -3,22 +3,103 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Dashboard</title>
+    <title>Student Dashboard - OEMS</title>
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="sidebar">
         <h2>Student Panel</h2>
-        <button onclick="startExam()" class="active">Start Exam</button>
-        <button onclick="logout()" class="logout">Logout</button>
+        <button type="button" data-section="dashboard" onclick="showSection('dashboard')" class="active"><i class="fas fa-tachometer-alt fa-fw"></i> Dashboard</button>
+        <button type="button" data-section="upcoming" onclick="showSection('upcoming')"><i class="fas fa-calendar-alt fa-fw"></i> Upcoming Exams</button>
+        <button type="button" data-section="history" onclick="showSection('history')"><i class="fas fa-history fa-fw"></i> Exam History</button>
+        <button type="button" onclick="logout()" class="logout"><i class="fas fa-sign-out-alt fa-fw"></i> Logout</button>
     </div>
 
     <div class="content">
-        <h3 class="section-title">Dashboard</h3>
-        <div id="exam-list-container">
-            <p>Your available exams will be listed here.</p>
-            <!-- Example of how an exam could be listed -->
-            <!-- <div class="exam-item"><span>Maths 101 Final</span><button onclick="startExam(1)">Start</button></div> -->
+        <!-- Top Navbar -->
+        <header class="top-navbar">
+            <div class="app-logo">OEMS</div>
+            <div class="user-profile">
+                <span id="nav-user" class="user-name">Loading...</span>
+                <span class="role-badge">Student</span>
+                <button onclick="logout()" class="nav-logout-btn">Logout</button>
+            </div>
+        </header>
+
+        <div class="main-scrollable-content">
+            
+            <!-- 1. Dashboard Overview -->
+            <div id="dashboard-section" class="form-container active" style="background: transparent; border: none; box-shadow: none; padding: 0;">
+                <h3 class="section-title">Overview</h3>
+                
+                <!-- Stats Cards -->
+                <div class="dashboard-grid" id="student-stats-container">
+                    <div class="spinner"></div>
+                </div>
+
+                <div class="dashboard-content-row" style="display: flex; gap: 20px; margin-top: 30px; flex-wrap: wrap;">
+                    <!-- Left Col: Upcoming Exams Preview -->
+                    <div class="dashboard-main-col" style="flex: 2; min-width: 300px;">
+                        <h4 class="section-title" style="font-size: 1.2rem; margin-bottom: 15px;">Next Up</h4>
+                        <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                            <table id="dashboard-upcoming-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                                <thead><tr><th>Exam</th><th>Subject</th><th>Date</th><th>Action</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Right Col: Performance Chart -->
+                    <div class="dashboard-side-col" style="flex: 1; min-width: 250px;">
+                        <div class="card-box" style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                            <h4 style="margin-top: 0; color: #2c3e50; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">Performance Trend</h4>
+                            <canvas id="studentPerformanceChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Upcoming Exams Section -->
+            <div id="upcoming-section" class="form-container">
+                <h3 class="section-title">Upcoming Exams</h3>
+                <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                    <table id="upcoming-exams-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                        <thead>
+                            <tr>
+                                <th>Exam Name</th>
+                                <th>Subject</th>
+                                <th>Date & Time</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 3. Exam History Section -->
+            <div id="history-section" class="form-container">
+                <h3 class="section-title">Exam History</h3>
+                <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                    <table id="history-exams-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                        <thead>
+                            <tr>
+                                <th>Exam Name</th>
+                                <th>Subject</th>
+                                <th>Score</th>
+                                <th>Result</th>
+                                <th>Date Taken</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
         </div>
     </div>
 

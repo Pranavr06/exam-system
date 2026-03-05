@@ -5,23 +5,176 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard - OEMS</title>
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
     <div class="sidebar">
         <h2>Admin Panel</h2>
-        <button type="button" data-section="teacher" onclick="showSection('teacher')" class="active">Add Teacher</button>
-        <button type="button" data-section="student" onclick="showSection('student')">Add Student</button>
-        <button type="button" data-section="subject" onclick="showSection('subject')">Add Subject</button>
-        <button type="button" data-section="section" onclick="showSection('section')">Add Section</button>
-        <button type="button" data-section="exam" onclick="showSection('exam')">Create Exam</button>
-        <button type="button" data-section="question" onclick="showSection('question')">Add Questions</button>
-        <button type="button" onclick="logout()" class="logout" data-section="logout">Logout</button>
+        <button type="button" data-section="dashboard" onclick="showSection('dashboard')" class="active"><i class="fas fa-tachometer-alt fa-fw"></i> Dashboard</button>
+        <button type="button" data-section="section" onclick="showSection('section')"><i class="fas fa-layer-group fa-fw"></i> Add Section</button>
+        <button type="button" data-section="subject" onclick="showSection('subject')"><i class="fas fa-book fa-fw"></i> Add Subject</button>
+        <button type="button" data-section="teacher" onclick="showSection('teacher')"><i class="fas fa-chalkboard-teacher fa-fw"></i> Add Teacher</button>
+        <button type="button" data-section="student" onclick="showSection('student')"><i class="fas fa-user-graduate fa-fw"></i> Add Student</button>
+        <button type="button" data-section="assignment" onclick="showSection('assignment')"><i class="fas fa-chalkboard fa-fw"></i> Assign Classes</button>
+        <button type="button" data-section="exam" onclick="showSection('exam')"><i class="fas fa-file-alt fa-fw"></i> Create Exam</button>
+        <button type="button" data-section="question" onclick="showSection('question')"><i class="fas fa-question-circle fa-fw"></i> Add Questions</button>
+        <button type="button" data-section="result" onclick="showSection('result')"><i class="fas fa-poll fa-fw"></i> View Results</button>
+        <button type="button" data-section="logs" onclick="showSection('logs')"><i class="fas fa-clipboard-list fa-fw"></i> System Logs</button>
     </div>
 
     <div class="content">
-        <!-- 1. Add Teacher -->
-        <div id="teacher-section" class="form-container active">
+        <!-- Top Navbar -->
+        <header class="top-navbar">
+            <div class="app-logo">OEMS</div>
+            <div class="user-profile">
+                <span id="nav-dept" class="dept-badge"></span>
+                <span id="nav-user" class="user-name">Loading...</span>
+                <span class="role-badge">Admin</span>
+                <button onclick="logout()" class="nav-logout-btn">Logout</button>
+            </div>
+        </header>
+
+        <div class="main-scrollable-content">
+        <!-- 0. Dashboard Overview -->
+        <div id="dashboard-section" class="form-container active" style="background: transparent; border: none; box-shadow: none; padding: 0;">
+            <h3 class="section-title">Overview</h3>
+            
+            <!-- Summary Cards -->
+            <div class="dashboard-grid" id="admin-stats-container">
+                <!-- Populated by JS -->
+                <div class="spinner"></div>
+            </div>
+
+            <div class="dashboard-content-row" style="display: flex; gap: 20px; margin-top: 30px; flex-wrap: wrap;">
+                <!-- Left Col: Activity & Alerts -->
+                <div class="dashboard-main-col" style="flex: 2; min-width: 300px;">
+                    
+                    <!-- Alerts -->
+                    <h4 style="font-size: 1rem; color: #666; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">System Alerts</h4>
+                    <div id="admin-alerts-container" style="margin-bottom: 25px;"></div>
+
+                    <!-- Recent Exams -->
+                    <h4 class="section-title" style="font-size: 1.2rem; margin-bottom: 15px;">Recent Exams</h4>
+                    <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                        <table id="admin-recent-exams-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                            <thead><tr><th>Exam</th><th>Sections (Sem)</th><th>Date</th><th>Status</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Performance Chart -->
+                    <div class="card-box" style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 20px;">
+                         <h4 style="margin-top: 0; color: #2c3e50; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">Avg. Performance by Subject</h4>
+                         <canvas id="adminPerformanceChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Right Col: Quick Actions & System Health -->
+                <div class="dashboard-side-col" style="flex: 1; min-width: 250px; display: flex; flex-direction: column; gap: 20px;">
+                    
+                    <!-- Quick Actions -->
+                    <div class="card-box" style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <h4 style="margin-top: 0; color: #2c3e50; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">Quick Actions</h4>
+                        <div class="quick-actions-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <button onclick="showSection('teacher')" class="btn-quick">➕ Teacher</button>
+                            <button onclick="showSection('student')" class="btn-quick">➕ Student</button>
+                            <button onclick="showSection('subject')" class="btn-quick">➕ Subject</button>
+                            <button onclick="showSection('exam')" class="btn-quick">➕ Exam</button>
+                        </div>
+                    </div>
+
+                    <!-- System Health -->
+                    <div class="card-box" style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <h4 style="margin-top: 0; color: #2c3e50; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">System Health</h4>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.9rem;">
+                            <span>Database Connection</span>
+                            <span style="color: #28a745; font-weight: bold;">● Active</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.9rem;">
+                            <span>Server Status</span>
+                            <span style="color: #28a745; font-weight: bold;">● Online</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 1. Add Section -->
+        <div id="section-section" class="form-container">
+            <h3 class="section-title">Add New Section</h3>
+            <form onsubmit="handleFormSubmit(event, '/admin/sections/create')">
+                <input type="hidden" name="section_id_hidden">
+                <div class="form-group"><label for="section-name">Section Name (e.g., A, B)</label><input id="section-name" type="text" name="name" required></div>
+                <div class="form-group">
+                    <label for="section-batch-year">Batch (Admission Year)</label>
+                    <select id="section-batch-year" name="batch_year" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="section-semester">Semester</label>
+                    <select id="section-semester" name="semester" required>
+                        <option value="">Select Semester</option>
+                        <option value="1">1</option><option value="2">2</option>
+                        <option value="3">3</option><option value="4">4</option>
+                        <option value="5">5</option><option value="6">6</option>
+                        <option value="7">7</option><option value="8">8</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="submit-btn">Create Section</button>
+                    <button type="button" class="submit-btn btn-secondary" style="display: none;" onclick="resetForm('section')">Cancel</button>
+                </div>
+            </form>
+
+            <div id="sections-list-container" style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+                <h4 style="margin-bottom: 15px; color: #2c3e50;">Manage Sections</h4>
+                
+                <!-- Filter Bar -->
+                <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                    <div class="form-group" style="min-width: 150px;">
+                        <label for="section-filter-semester">Semester</label>
+                        <select id="section-filter-semester" onchange="loadSectionsList()">
+                            <option value="">All Semesters</option>
+                            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                            <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="min-width: 200px;">
+                        <label for="section-filter-search">Search Section</label>
+                        <input type="text" id="section-filter-search" placeholder="Search by Name..." onkeyup="loadSectionsList()">
+                    </div>
+                </div>
+
+                <div id="sections-list">
+                    <table id="sections-table">
+                        <thead><tr><th>Section Name</th><th>Batch</th><th>Semester</th><th>Students</th><th>Actions</th></tr></thead>
+                        <tbody id="sections-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Add Subject -->
+        <div id="subject-section" class="form-container">
+            <h3 class="section-title">Add New Subject</h3>
+            <form onsubmit="handleFormSubmit(event, '/admin/subjects/create')">
+                <input type="hidden" name="subject_id">
+                <div class="form-group"><label for="subject-name">Subject Name</label><input id="subject-name" type="text" name="subject_name" required></div>
+                <div class="form-actions">
+                    <button type="submit" class="submit-btn">Create Subject</button>
+                    <button type="button" class="submit-btn btn-secondary" style="display: none;" onclick="resetForm('subject')">Cancel</button>
+                </div>
+            </form>
+
+            <div id="subjects-list-container" style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+                <h4 style="margin-bottom: 15px; color: #2c3e50;">Existing Subjects</h4>
+                <div id="subjects-list"><p style="color: #666;">Loading...</p></div>
+            </div>
+        </div>
+
+        <!-- 3. Add Teacher -->
+        <div id="teacher-section" class="form-container">
             <h3 class="section-title">Add New Teacher</h3>
             <form onsubmit="handleFormSubmit(event, '/admin/teachers/create')">
                 <input type="hidden" name="teacher_id">
@@ -45,7 +198,7 @@
             </div>
         </div>
 
-        <!-- 2. Add Student -->
+        <!-- 4. Add Student -->
         <div id="student-section" class="form-container">
             <h3 class="section-title">Add New Student</h3>
             <form onsubmit="handleFormSubmit(event, '/admin/students/create')">
@@ -59,7 +212,16 @@
                     </button></div>
                 </div>
                 <div class="form-group"><label for="student-usn">USN</label><input id="student-usn" type="text" name="usn" required></div>
-                <div class="form-group"><label for="student-semester">Semester</label><input id="student-semester" type="number" name="semester" min="1" max="8" required></div>
+                <div class="form-group">
+                    <label for="student-semester">Semester</label>
+                    <select id="student-semester" name="semester" required>
+                        <option value="">Select Semester</option>
+                        <option value="1">1</option><option value="2">2</option>
+                        <option value="3">3</option><option value="4">4</option>
+                        <option value="5">5</option><option value="6">6</option>
+                        <option value="7">7</option><option value="8">8</option>
+                    </select>
+                </div>
                 <div class="form-group"><label for="student-section-label">Section Label</label><input id="student-section-label" type="text" name="section_label" required></div>
                 <div class="form-group">
                     <label for="student-section-id">Section</label>
@@ -72,49 +234,80 @@
             </form>
 
             <div id="students-list-container" style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
-                <h4 style="margin-bottom: 15px; color: #2c3e50;">Existing Students</h4>
-                <div id="students-list"><p style="color: #666;">Loading...</p></div>
+                <h4 style="margin-bottom: 15px; color: #2c3e50;">Manage Students</h4>
+                
+                <!-- Filter Bar -->
+                <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                    <div class="form-group" style="min-width: 150px;">
+                        <label for="student-filter-semester">Semester</label>
+                        <select id="student-filter-semester" onchange="loadStudentsList()">
+                            <option value="">All Semesters</option>
+                            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                            <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="min-width: 150px;"><label for="student-filter-section">Section</label><select id="student-filter-section" onchange="loadStudentsList()"><option value="">All Sections</option></select></div>
+                    <div class="form-group" style="min-width: 200px;">
+                        <label for="student-filter-search">Search Student</label>
+                        <input type="text" id="student-filter-search" placeholder="Name or USN..." onkeyup="loadStudentsList()">
+                    </div>
+                </div>
+
+                <div id="students-list">
+                    <table id="students-table">
+                        <thead><tr><th>USN</th><th>Name</th><th>Email</th><th>Sem/Sec</th><th>Actions</th></tr></thead>
+                        <tbody id="students-table-body"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
-        <!-- 3. Add Subject -->
-        <div id="subject-section" class="form-container">
-            <h3 class="section-title">Add New Subject</h3>
-            <form onsubmit="handleFormSubmit(event, '/admin/subjects/create')">
-                <input type="hidden" name="subject_id">
-                <div class="form-group"><label for="subject-name">Subject Name</label><input id="subject-name" type="text" name="subject_name" required></div>
+        <!-- 5. Assign Classes (Teacher -> Subject -> Section) -->
+        <div id="assignment-section" class="form-container">
+            <h3 class="section-title">Assign Teacher to Class</h3>
+            <form onsubmit="handleFormSubmit(event, '/admin/assignments/create')">
+                <input type="hidden" name="assignment_id">
+                <div class="form-group"><label for="assign-teacher">Teacher</label><select id="assign-teacher" name="teacher_id" required><option value="">Loading...</option></select></div>
+                <div class="form-group"><label for="assign-subject">Subject</label><select id="assign-subject" name="subject_id" required><option value="">Loading...</option></select></div>
+                <div class="form-group"><label for="assign-section">Section</label><select id="assign-section" name="section_id" required><option value="">Loading...</option></select></div>
                 <div class="form-actions">
-                    <button type="submit" class="submit-btn">Create Subject</button>
-                    <button type="button" class="submit-btn btn-secondary" style="display: none;" onclick="resetForm('subject')">Cancel</button>
+                    <button type="submit" class="submit-btn">Assign Class</button>
+                    <button type="button" class="submit-btn btn-secondary" style="display: none;" onclick="resetForm('assignment')">Cancel</button>
                 </div>
             </form>
 
-            <div id="subjects-list-container" style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
-                <h4 style="margin-bottom: 15px; color: #2c3e50;">Existing Subjects</h4>
-                <div id="subjects-list"><p style="color: #666;">Loading...</p></div>
-            </div>
-        </div>
-
-        <!-- 4. Add Section -->
-        <div id="section-section" class="form-container">
-            <h3 class="section-title">Add New Section</h3>
-            <form onsubmit="handleFormSubmit(event, '/admin/sections/create')">
-                <input type="hidden" name="section_id_hidden">
-                <div class="form-group"><label for="section-name">Section Name (e.g., A, B)</label><input id="section-name" type="text" name="name" required></div>
-                <div class="form-group"><label for="section-semester">Semester</label><input id="section-semester" type="number" name="semester" min="1" max="8" required></div>
-                <div class="form-actions">
-                    <button type="submit" class="submit-btn">Create Section</button>
-                    <button type="button" class="submit-btn btn-secondary" style="display: none;" onclick="resetForm('section')">Cancel</button>
+            <div id="assignments-list-container" style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+                <h4 style="margin-bottom: 15px; color: #2c3e50;">Manage Assignments</h4>
+                
+                <!-- Filter Bar -->
+                <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                    <div class="form-group" style="min-width: 120px;">
+                        <label for="assignment-filter-semester">Semester</label>
+                        <select id="assignment-filter-semester" onchange="loadAssignmentsList()">
+                            <option value="">All Semesters</option>
+                            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                            <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="min-width: 150px;"><label for="assignment-filter-section">Section</label><select id="assignment-filter-section" onchange="loadAssignmentsList()"><option value="">All Sections</option></select></div>
+                    <div class="form-group" style="min-width: 150px;"><label for="assignment-filter-teacher">Teacher</label><select id="assignment-filter-teacher" onchange="loadAssignmentsList()"><option value="">All Teachers</option></select></div>
+                    <div class="form-group" style="min-width: 150px;"><label for="assignment-filter-subject">Subject</label><select id="assignment-filter-subject" onchange="loadAssignmentsList()"><option value="">All Subjects</option></select></div>
+                    <div class="form-group" style="min-width: 200px;">
+                        <label for="assignment-filter-search">Search</label>
+                        <input type="text" id="assignment-filter-search" placeholder="Teacher or Subject..." onkeyup="loadAssignmentsList()">
+                    </div>
                 </div>
-            </form>
 
-            <div id="sections-list-container" style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
-                <h4 style="margin-bottom: 15px; color: #2c3e50;">Existing Sections</h4>
-                <div id="sections-list"><p style="color: #666;">Loading...</p></div>
+                <div id="assignments-list">
+                    <table id="assignments-table">
+                        <thead><tr><th>Teacher</th><th>Subject</th><th>Section</th><th>Semester</th><th>Actions</th></tr></thead>
+                        <tbody id="assignments-table-body"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
-        <!-- 5. Create Exam -->
+        <!-- 6. Create Exam -->
         <div id="exam-section" class="form-container">
             <h3 class="section-title">Create Exam</h3>
             <form onsubmit="handleFormSubmit(event, '/admin/exams/create')">
@@ -123,14 +316,26 @@
                 <div class="form-group"><label for="exam-subject">Subject</label><select id="exam-subject" name="subject_id" required><option value="">Loading...</option></select></div>
                 <div class="form-group"><label for="exam-date">Date & Time</label><input id="exam-date" type="datetime-local" name="exam_date" required></div>
                 <div class="form-group"><label for="exam-duration">Duration (Minutes)</label><input id="exam-duration" type="number" name="duration" min="1" required></div>
+                <div class="form-group"><label for="exam-total-marks">Total Marks</label><input id="exam-total-marks" type="number" name="total_marks" min="1" max="100" required></div>
                 <div class="form-group">
                     <label for="exam-scope">Scope</label>
                     <select id="exam-scope" name="exam_scope" aria-label="Exam Scope">
-                        <option value="DEPARTMENT">Department Wide</option>
-                        <option value="SECTION">Specific Sections</option>
+                        <option value="DEPARTMENT">Entire Department</option>
+                        <option value="BATCH">Entire Batch (by Semester)</option>
+                        <option value="SECTION">Specific Section</option>
                     </select>
                 </div>
-                <div class="form-group hidden" id="exam-section-container">
+                <div class="form-group hidden" id="exam-batch-container">
+                    <div class="form-group" style="min-width: calc(50% - 8px);">
+                        <label for="exam-batch-year">Batch (Admission Year)</label>
+                        <select id="exam-batch-year" name="batch_year"></select>
+                    </div>
+                    <div class="form-group" style="min-width: calc(50% - 8px);">
+                        <label for="exam-semester">Semester</label>
+                        <select id="exam-semester" name="semester"></select>
+                    </div>
+                </div>
+                <div class="form-group hidden" id="exam-section-container" style="min-width: calc(33.33% - 15px);">
                     <label for="exam-section-select">Section</label>
                     <select id="exam-section-select" name="section_id"><option value="">Select Section</option></select>
                 </div>
@@ -151,30 +356,48 @@
             <h3 class="section-title">Add Questions to Exam</h3>
             <form onsubmit="handleSaveQuestion(event)" id="question-form">
                 <input type="hidden" name="question_id" id="question-id-hidden">
-                <div class="form-group">
-                    <label for="question-exam-id">Select Exam</label>
-                    <select id="question-exam-id" name="exam_id" required><option value="">Loading...</option></select>
-                </div>
-                <div class="form-group">
-                    <label for="question-text">Question Text</label>
-                    <textarea id="question-text" name="question_text" rows="3" required></textarea>
-                </div>
-                <div class="form-group">
-                    <label for="question-marks">Marks</label>
-                    <input id="question-marks" type="number" name="marks" value="1" min="1" max="4" required>
-                </div>
-                
-                <div class="form-group">
-                    <label>Options (Select the correct answer)</label>
-                    <div class="options-container">
-                        <div class="option-row"><label><input type="radio" name="correct_option" value="0" required> <input type="text" name="option_0" placeholder="Option A" title="Option A" required></label></div>
-                        <div class="option-row"><label><input type="radio" name="correct_option" value="1"> <input type="text" name="option_1" placeholder="Option B" title="Option B" required></label></div>
-                        <div class="option-row"><label><input type="radio" name="correct_option" value="2"> <input type="text" name="option_2" placeholder="Option C" title="Option C" required></label></div>
-                        <div class="option-row"><label><input type="radio" name="correct_option" value="3"> <input type="text" name="option_3" placeholder="Option D" title="Option D" required></label></div>
+                <div class="question-form-grid">
+                    <!-- Left Column: Exam Details -->
+                    <div class="left-col">
+                        <div class="form-group">
+                            <label for="question-exam-id">Select Exam</label>
+                            <select id="question-exam-id" name="exam_id" required><option value="">Loading...</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="question-text">Question Text</label>
+                            <textarea id="question-text" name="question_text" rows="3" required></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="question-marks">Marks</label>
+                            <input id="question-marks" type="number" name="marks" value="1" min="0.25" max="4" step="0.25" required>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Options -->
+                    <div class="right-col">
+                        <label class="options-label">Answer Options (Select Correct)</label>
+                        <div class="options-container">
+                            <div class="option-input-group">
+                                <input type="radio" name="correct_option" value="0" required title="Mark as correct">
+                                <input type="text" name="option_0" placeholder="Option A" required>
+                            </div>
+                            <div class="option-input-group">
+                                <input type="radio" name="correct_option" value="1" title="Mark as correct">
+                                <input type="text" name="option_1" placeholder="Option B" required>
+                            </div>
+                            <div class="option-input-group">
+                                <input type="radio" name="correct_option" value="2" title="Mark as correct">
+                                <input type="text" name="option_2" placeholder="Option C">
+                            </div>
+                            <div class="option-input-group">
+                                <input type="radio" name="correct_option" value="3" title="Mark as correct">
+                                <input type="text" name="option_3" placeholder="Option D">
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
-                <div class="form-actions">
+                <div class="form-footer">
                     <button type="submit" class="submit-btn" id="save-question-btn">Add Question</button>
                     <button type="button" class="submit-btn btn-secondary" id="cancel-edit-btn" style="display: none;" onclick="resetQuestionForm()">Cancel</button>
                 </div>
@@ -186,6 +409,88 @@
                 <div id="questions-list"><p style="color: #666;">Select an exam to view questions.</p></div>
                 <div id="pagination-controls" style="margin-top: 15px; display: flex; justify-content: center; gap: 5px;"></div>
             </div>
+        </div>
+
+        <!-- 8. Result Management -->
+        <div id="result-section" class="form-container">
+            <h3 class="section-title">Result Management</h3>
+            
+            <!-- Filters -->
+            <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                <div class="form-group" style="min-width: 150px;">
+                    <label for="filter-semester">Semester</label>
+                    <select id="filter-semester" onchange="loadResults()">
+                        <option value="">All Semesters</option>
+                        <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                        <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+                    </select>
+                </div>
+                <div class="form-group" style="min-width: 150px;"><label for="filter-section">Section</label><select id="filter-section" onchange="loadResults()"><option value="">All Sections</option></select></div>
+                <div class="form-group" style="min-width: 150px;"><label for="filter-subject">Subject</label><select id="filter-subject" onchange="loadResults()"><option value="">All Subjects</option></select></div>
+                <div class="form-group" style="min-width: 150px;"><label for="filter-teacher">Teacher</label><select id="filter-teacher" onchange="loadResults()"><option value="">All Teachers</option></select></div>
+                <div class="form-group" style="min-width: 200px;">
+                    <label for="filter-search">Search</label>
+                    <input type="text" id="filter-search" placeholder="Name or USN" onkeyup="loadResults()">
+                </div>
+                <div class="form-group" style="flex: 0; min-width: auto; display: flex; align-items: flex-end;">
+                    <button onclick="exportResults()" class="submit-btn" style="background-color: #17a2b8; height: 42px;">Export CSV</button>
+                </div>
+            </div>
+
+            <div style="max-width: 400px; margin: 0 auto 20px auto;">
+                <canvas id="resultsChart"></canvas>
+            </div>
+
+            <div id="all-results-container" style="overflow-x: auto;">
+                <table id="all-results-table">
+                    <thead>
+                        <tr>
+                            <th>USN</th><th>Name</th><th>Sem/Sec</th><th>Exam</th><th>Subject</th><th>Marks</th><th>%</th><th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="all-results-body">
+                        <tr><td colspan="8" style="text-align:center;">Select filters to view results</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 9. System Logs -->
+        <div id="logs-section" class="form-container">
+            <h3 class="section-title">Department System Logs</h3>
+
+            <!-- Filters -->
+            <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                <div class="form-group" style="min-width: 150px;">
+                    <label for="log-start-date">Start Date</label>
+                    <input type="date" id="log-start-date" onchange="loadSystemLogs()">
+                </div>
+                <div class="form-group" style="min-width: 150px;">
+                    <label for="log-end-date">End Date</label>
+                    <input type="date" id="log-end-date" onchange="loadSystemLogs()">
+                </div>
+                <div class="form-group" style="min-width: 150px;">
+                    <label for="log-action-type">Action Type</label>
+                    <select id="log-action-type" onchange="loadSystemLogs()">
+                        <option value="">All</option>
+                        <option value="Create">Create</option>
+                        <option value="Update">Update</option>
+                        <option value="Delete">Delete</option>
+                        <option value="Publish">Publish</option>
+                    </select>
+                </div>
+                <div class="form-group" style="min-width: 200px;">
+                    <label for="log-search">Search Logs</label>
+                    <input type="text" id="log-search" placeholder="Search action or entity..." onkeyup="loadSystemLogs()">
+                </div>
+            </div>
+
+            <table id="system-logs-table">
+                <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Entity</th><th>IP Address</th></tr></thead>
+                <tbody id="system-logs-body"></tbody>
+            </table>
+            <div id="logs-pagination-controls" style="margin-top: 15px; display: flex; justify-content: center; gap: 5px;"></div>
+        </div>
         </div>
     </div>
 
@@ -202,6 +507,28 @@
             <div class="modal-actions">
                 <button onclick="closeDeleteModal()" class="cancel-btn">Cancel</button>
                 <button onclick="confirmDeleteQuestion()" class="delete-btn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Modal -->
+    <div id="results-modal" class="modal">
+        <div class="modal-content large">
+            <span class="close-btn" onclick="closeResultsModal()">&times;</span>
+            <h3 style="margin-bottom: 20px; color: #2c3e50;">Exam Results</h3>
+            <div id="results-table-container" style="max-height: 400px; overflow-y: auto;">
+                <table id="results-table">
+                    <thead>
+                        <tr>
+                            <th>USN</th>
+                            <th>Name</th>
+                            <th>Score</th>
+                            <th>Status</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
             </div>
         </div>
     </div>

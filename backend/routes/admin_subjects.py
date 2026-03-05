@@ -46,6 +46,7 @@ def create_subject(
 @router.post("/admin/sections/create")
 def create_section(
     name: str = Body(...),
+    batch_year: int = Body(...),
     semester: int = Body(...),
     user=Depends(get_current_user)
 ):
@@ -63,8 +64,8 @@ def create_section(
         department_id = admin_row["department_id"]
 
         cursor.execute(
-            "INSERT INTO section (section_name, semester, department_id) VALUES (%s, %s, %s)",
-            (name, semester, department_id)
+            "INSERT INTO section (section_name, batch_year, semester, department_id) VALUES (%s, %s, %s, %s)",
+            (name, batch_year, semester, department_id)
         )
         conn.commit()
         return {"message": "Section created successfully"}
@@ -79,7 +80,11 @@ def create_section(
         conn.close()
 
 @router.get("/admin/sections")
-def get_sections(user=Depends(get_current_user)):
+def get_sections(
+    semester: int = None,
+    search: str = None,
+    user=Depends(get_current_user)
+):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -92,9 +97,25 @@ def get_sections(user=Depends(get_current_user)):
         if not admin_row or not admin_row["department_id"]:
             raise HTTPException(status_code=400, detail="Admin not assigned to department")
         
-        cursor.execute("SELECT section_id, section_name, semester FROM section WHERE department_id = %s", (admin_row["department_id"],))
-        sections = cursor.fetchall()
-        return sections
+        query = """
+            SELECT sec.section_id, sec.section_name, sec.batch_year, sec.semester, COUNT(s.student_id) as student_count
+            FROM section sec
+            LEFT JOIN student s ON sec.section_id = s.section_id
+            WHERE sec.department_id = %s
+        """
+        params = [admin_row["department_id"]]
+
+        if semester:
+            query += " AND sec.semester = %s"
+            params.append(semester)
+        if search:
+            query += " AND sec.section_name LIKE %s"
+            params.append(f"%{search}%")
+
+        query += " GROUP BY sec.section_id ORDER BY sec.semester, sec.section_name"
+        
+        cursor.execute(query, tuple(params))
+        return cursor.fetchall()
     finally:
         cursor.close()
         conn.close()
@@ -220,6 +241,7 @@ def get_section(section_id: int, user=Depends(get_current_user)):
 def update_section(
     section_id: int,
     name: str = Body(...),
+    batch_year: int = Body(...),
     semester: int = Body(...),
     user=Depends(get_current_user)
 ):
@@ -230,7 +252,11 @@ def update_section(
     try:
         cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
         admin_dept = cursor.fetchone()["department_id"]
-        cursor.execute("UPDATE section SET section_name=%s, semester=%s WHERE section_id=%s AND department_id=%s", (name, semester, section_id, admin_dept))
+        cursor.execute("UPDATE section SET section_name=%s, batch_year=%s, semester=%s WHERE section_id=%s AND department_id=%s", (name, batch_year, semester, section_id, admin_dept))
+        
+        if cursor.rowcount == 0:
+             raise HTTPException(status_code=404, detail="Section not found")
+
         conn.commit()
         return {"message": "Section updated successfully"}
     except mysql.connector.IntegrityError:
