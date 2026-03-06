@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from db import get_connection
 from security import get_current_user
 from datetime import datetime
@@ -17,10 +17,10 @@ VIOLATION_WEIGHTS = {
 
 @router.post("/student/violation")
 def record_violation(
-    exam_id: int,
-    question_id: int,
-    violation_type: str,
-    confidence_score: float = 1.0,
+    exam_id: int = Body(...),
+    question_id: int = Body(...),
+    violation_type: str = Body(...),
+    confidence_score: float = Body(1.0),
     user=Depends(get_current_user),
 ):
     if user["role"] != "student":

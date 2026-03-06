@@ -56,7 +56,12 @@ def get_teacher_stats(user=Depends(get_current_user)):
 
         # Recent Exams (Last 5 created)
         cursor.execute("""
-            SELECT e.exam_name, s.subject_name, e.date, e.status, e.exam_id,
+            SELECT e.exam_name, s.subject_name, e.date, 
+                   CASE
+                       WHEN e.status = 'completed' THEN 'completed'
+                       WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
+                       ELSE e.status
+                   END as status, e.exam_id,
                    GROUP_CONCAT(DISTINCT CONCAT(sec.section_name, ' (', sec.batch_year, ', Sem ', sec.semester, ')') SEPARATOR ', ') as sections
             FROM exam e
             JOIN subject s ON e.subject_id = s.subject_id
@@ -285,7 +290,12 @@ def get_teacher_exams(
     cursor = conn.cursor(dictionary=True)
     try:
         query = """
-            SELECT e.exam_id, e.exam_name, s.subject_name, e.date, e.status, e.total_marks, e.duration, e.subject_id,
+            SELECT e.exam_id, e.exam_name, s.subject_name, e.date, 
+                   CASE
+                       WHEN e.status = 'completed' THEN 'completed'
+                       WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
+                       ELSE e.status
+                   END as status, e.total_marks, e.duration, e.subject_id,
                    COALESCE(GROUP_CONCAT(DISTINCT CONCAT(sec.section_name, ' (', sec.batch_year, ', Sem ', sec.semester, ')') SEPARATOR ', '), 'N/A') as sections,
                    GROUP_CONCAT(DISTINCT sec.section_id) as section_ids
             FROM exam e
@@ -299,14 +309,15 @@ def get_teacher_exams(
         if subject_id:
             query += " AND e.subject_id = %s"
             params.append(subject_id)
-        if status:
-            query += " AND e.status = %s"
-            params.append(status)
         if search:
             query += " AND e.exam_name LIKE %s"
             params.append(f"%{search}%")
 
-        query += " GROUP BY e.exam_id ORDER BY e.date DESC"
+        query += " GROUP BY e.exam_id"
+        if status:
+            query += " HAVING status = %s"
+            params.append(status)
+        query += " ORDER BY e.date DESC"
         
         cursor.execute(query, tuple(params))
         return cursor.fetchall()
@@ -674,7 +685,7 @@ def publish_exam_teacher(exam_id: int, request: Request, user=Depends(get_curren
     cursor = conn.cursor(dictionary=True)
     try:
         # Verify Ownership
-        cursor.execute("SELECT total_marks FROM exam WHERE exam_id = %s AND created_by_teacher = %s", (exam_id, user["user_id"]))
+        cursor.execute("SELECT * FROM exam WHERE exam_id = %s AND created_by_teacher = %s", (exam_id, user["user_id"]))
         exam = cursor.fetchone()
         if not exam:
             raise HTTPException(status_code=403, detail="Access denied")
@@ -810,6 +821,140 @@ def update_exam_teacher(
 
         conn.commit()
         return {"message": "Exam updated successfully"}
+    finally:
+        cursor.close()
+        conn.close()
+
+# --- Teacher Violations ---
+@router.get("/teacher/violations/stats")
+def get_teacher_violation_stats(status: str = Query(None), user=Depends(get_current_user)):
+    if user["role"] != "teacher":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # Base filter: Violations for exams created by this teacher
+        base_where = "e.created_by_teacher = %s"
+        params = [user["user_id"]]
+        
+        if status:
+            base_where += " AND v.review_status = %s"
+            params.append(status)
+
+        stats = {}
+        
+        # 1. Summary Cards
+        cursor.execute(f"""
+            SELECT COUNT(v.violation_id) as c 
+            FROM violation v
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE {base_where} AND DATE(v.`timestamp`) = CURDATE()
+        """, tuple(params))
+        stats["today"] = cursor.fetchone()["c"]
+        
+        cursor.execute(f"""
+            SELECT COUNT(v.violation_id) as c 
+            FROM violation v
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE {base_where} AND YEARWEEK(v.`timestamp`, 1) = YEARWEEK(CURDATE(), 1)
+        """, tuple(params))
+        stats["week"] = cursor.fetchone()["c"]
+        
+        cursor.execute(f"""
+            SELECT COUNT(DISTINCT v.student_id) as c 
+            FROM violation v
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE {base_where}
+        """, tuple(params))
+        stats["students_flagged"] = cursor.fetchone()["c"]
+
+        # 2. Recent Violations
+        cursor.execute(f"""
+            SELECT v.violation_id, s.name, s.usn, e.exam_name, v.violation_type, v.`timestamp`, v.review_status
+            FROM violation v 
+            JOIN student s ON v.student_id = s.student_id 
+            JOIN exam e ON v.exam_id = e.exam_id 
+            WHERE {base_where}
+            ORDER BY v.`timestamp` DESC LIMIT 20
+        """, tuple(params))
+        stats["recent"] = cursor.fetchall()
+
+        return stats
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/teacher/violations/{violation_id}")
+def get_violation_details_teacher(violation_id: int, user=Depends(get_current_user)):
+    if user["role"] != "teacher":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT v.*, s.name as student_name, s.usn, e.exam_name, q.question_text
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            JOIN exam e ON v.exam_id = e.exam_id
+            LEFT JOIN question q ON v.question_id = q.question_id
+            WHERE v.violation_id = %s AND e.created_by_teacher = %s
+        """, (violation_id, user["user_id"]))
+        
+        violation = cursor.fetchone()
+        if not violation:
+            raise HTTPException(status_code=404, detail="Violation not found or access denied")
+            
+        # Fetch Evidence
+        cursor.execute("SELECT * FROM evidence WHERE violation_id = %s", (violation_id,))
+        violation["evidence"] = cursor.fetchall()
+
+        return violation
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.put("/teacher/violations/{violation_id}/resolve")
+def resolve_violation_teacher(
+    violation_id: int, 
+    status: str = Body(...), 
+    remarks: str = Body(None),
+    user=Depends(get_current_user)
+):
+    if user["role"] != "teacher":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Verify ownership via exam
+        cursor.execute("""
+            UPDATE violation v JOIN exam e ON v.exam_id = e.exam_id 
+            SET v.review_status = %s, v.admin_remarks = %s 
+            WHERE v.violation_id = %s AND e.created_by_teacher = %s
+        """, (status, remarks, violation_id, user["user_id"]))
+        
+        if cursor.rowcount == 0:
+             pass # Or raise error
+        
+        # Auto-flag High Risk Student
+        if status == 'Resolved':
+            cursor.execute("""
+                SELECT v.student_id FROM violation v 
+                JOIN exam e ON v.exam_id = e.exam_id 
+                WHERE v.violation_id = %s AND e.created_by_teacher = %s
+            """, (violation_id, user["user_id"]))
+            row = cursor.fetchone()
+            if row:
+                student_id = row[0]
+                cursor.execute("SELECT COUNT(*) FROM violation WHERE student_id = %s AND review_status = 'Resolved'", (student_id,))
+                count = cursor.fetchone()[0]
+                if count > 3:
+                    cursor.execute("UPDATE student SET risk_status = 'High Risk' WHERE student_id = %s", (student_id,))
+
+        conn.commit()
+        return {"message": f"Violation marked as {status}"}
     finally:
         cursor.close()
         conn.close()

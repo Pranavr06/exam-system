@@ -371,7 +371,12 @@ def get_all_exams(
     try:
         query = """
             SELECT 
-                e.exam_id, e.exam_name, e.date, e.status, e.total_marks,
+                e.exam_id, e.exam_name, e.date, 
+                CASE
+                    WHEN e.status = 'completed' THEN 'completed'
+                    WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
+                    ELSE e.status
+                END as status, e.total_marks,
                 d.department_name,
                 s.subject_name,
                 e.batch_year,
@@ -389,13 +394,13 @@ def get_all_exams(
         if department_id:
             query += " AND e.department_id = %s"
             params.append(department_id)
-        if status:
-            query += " AND e.status = %s"
-            params.append(status)
         if search:
             query += " AND (e.exam_name LIKE %s OR s.subject_name LIKE %s)"
             params.extend([f"%{search}%", f"%{search}%"])
 
+        if status:
+            query += " HAVING status = %s"
+            params.append(status)
         query += " ORDER BY e.date DESC"
         cursor.execute(query, tuple(params))
         return cursor.fetchall()
@@ -480,7 +485,7 @@ def get_all_students_analytics(department_id: int = Query(None), search: str = Q
     cursor = conn.cursor(dictionary=True)
     try:
         query = """
-            SELECT s.student_id, s.name, s.usn, d.department_name,
+            SELECT s.student_id, s.name, s.usn, d.department_name, s.risk_status,
                 (SELECT COUNT(*) FROM attempt a WHERE a.student_id = s.student_id) as exams_taken,
                 (SELECT COALESCE(AVG((r.total_marks / e.total_marks) * 100), 0) 
                  FROM result r JOIN exam e ON r.exam_id = e.exam_id 
@@ -506,70 +511,80 @@ def get_all_students_analytics(department_id: int = Query(None), search: str = Q
         conn.close()
 
 @router.get("/superadmin/violations/stats", dependencies=[Depends(require_super_admin)])
-def get_violation_analytics():
+def get_violation_analytics(status: str = Query(None)):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        where_clause = "1=1"
+        params = []
+        if status:
+            where_clause += " AND review_status = %s"
+            params.append(status)
+
         stats = {}
         
         # 1. Summary Cards
-        cursor.execute("SELECT COUNT(*) as c FROM violation WHERE DATE(`timestamp`) = CURDATE()")
+        cursor.execute(f"SELECT COUNT(*) as c FROM violation WHERE {where_clause} AND DATE(`timestamp`) = CURDATE()", tuple(params))
         stats["today"] = cursor.fetchone()["c"]
         
-        cursor.execute("SELECT COUNT(*) as c FROM violation WHERE YEARWEEK(`timestamp`, 1) = YEARWEEK(CURDATE(), 1)")
+        cursor.execute(f"SELECT COUNT(*) as c FROM violation WHERE {where_clause} AND YEARWEEK(`timestamp`, 1) = YEARWEEK(CURDATE(), 1)", tuple(params))
         stats["week"] = cursor.fetchone()["c"]
         
-        cursor.execute("SELECT COUNT(DISTINCT student_id) as c FROM violation")
+        cursor.execute(f"SELECT COUNT(DISTINCT student_id) as c FROM violation WHERE {where_clause}", tuple(params))
         stats["students_flagged"] = cursor.fetchone()["c"]
         
-        cursor.execute("SELECT COUNT(DISTINCT exam_id) as c FROM violation")
+        cursor.execute(f"SELECT COUNT(DISTINCT exam_id) as c FROM violation WHERE {where_clause}", tuple(params))
         stats["exams_affected"] = cursor.fetchone()["c"]
 
         # 2. Trend (Last 7 Days)
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT DATE_FORMAT(`timestamp`, '%Y-%m-%d') as date, COUNT(*) as count 
             FROM violation 
-            WHERE `timestamp` >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) 
-            GROUP BY DATE(`timestamp`) 
+            WHERE {where_clause} AND `timestamp` >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) 
+            GROUP BY DATE_FORMAT(`timestamp`, '%Y-%m-%d')
             ORDER BY date ASC
-        """)
+        """, tuple(params))
         stats["trend"] = cursor.fetchall()
 
         # 3. By Department
-        cursor.execute("""
+        # Need to join student to filter by violation status if needed, but violation table has review_status
+        cursor.execute(f"""
             SELECT d.department_name, COUNT(v.violation_id) as count 
             FROM violation v 
             JOIN student s ON v.student_id = s.student_id 
             JOIN department d ON s.department_id = d.department_id 
+            WHERE {where_clause.replace('review_status', 'v.review_status')}
             GROUP BY d.department_id
-        """)
+        """, tuple(params))
         stats["by_dept"] = cursor.fetchall()
 
         # 4. By Type
-        cursor.execute("SELECT violation_type, COUNT(*) as count FROM violation GROUP BY violation_type")
+        cursor.execute(f"SELECT violation_type, COUNT(*) as count FROM violation WHERE {where_clause} GROUP BY violation_type", tuple(params))
         stats["by_type"] = cursor.fetchall()
 
         # 5. Recent Violations
-        cursor.execute("""
-            SELECT v.violation_id, s.name, s.usn, d.department_name, e.exam_name, v.violation_type, v.`timestamp` 
+        cursor.execute(f"""
+            SELECT v.violation_id, s.name, s.usn, d.department_name, e.exam_name, v.violation_type, v.`timestamp`, v.review_status
             FROM violation v 
             JOIN student s ON v.student_id = s.student_id 
             JOIN department d ON s.department_id = d.department_id 
             JOIN exam e ON v.exam_id = e.exam_id 
+            WHERE {where_clause.replace('review_status', 'v.review_status')}
             ORDER BY v.`timestamp` DESC LIMIT 10
-        """)
+        """, tuple(params))
         stats["recent"] = cursor.fetchall()
 
         # 6. High Risk Students
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT s.name, s.usn, d.department_name, COUNT(v.violation_id) as violation_count 
             FROM violation v 
             JOIN student s ON v.student_id = s.student_id 
             JOIN department d ON s.department_id = d.department_id 
+            WHERE {where_clause.replace('review_status', 'v.review_status')}
             GROUP BY s.student_id 
             HAVING violation_count > 1 
             ORDER BY violation_count DESC LIMIT 5
-        """)
+        """, tuple(params))
         stats["high_risk"] = cursor.fetchall()
 
         return stats

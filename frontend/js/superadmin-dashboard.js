@@ -729,7 +729,7 @@ async function loadAllStudents() {
 
         tbody.innerHTML = students.map(s => `
             <tr>
-                <td><strong>${s.name}</strong> <span style="color:#666; font-size:0.85em;">(${s.usn})</span></td>
+                <td><strong>${s.name}</strong> <span style="color:#666; font-size:0.85em;">(${s.usn})</span> ${s.risk_status === 'High Risk' ? '<span style="background:#FEE2E2; color:#DC2626; padding:2px 6px; border-radius:4px; font-size:0.7em; font-weight:bold;">High Risk</span>' : ''}</td>
                 <td><span class="dept-badge">${s.department_name}</span></td>
                 <td style="text-align:center;">${s.exams_taken}</td>
                 <td style="text-align:center;">${parseFloat(s.avg_score).toFixed(1)}%</td>
@@ -744,9 +744,12 @@ async function loadAllStudents() {
 async function loadViolationAnalytics() {
     const container = document.getElementById('violation-summary-cards');
     container.innerHTML = '<div class="spinner"></div>';
+    const status = document.getElementById('sa-violation-filter-status').value;
     
     try {
-        const stats = await apiRequest('/superadmin/violations/stats');
+        let url = '/superadmin/violations/stats';
+        if (status) url += `?status=${status}`;
+        const stats = await apiRequest(url);
         
         // 1. Summary Cards
         container.innerHTML = `
@@ -791,6 +794,13 @@ async function loadViolationAnalytics() {
                 <td><span class="dept-badge">${v.department_name}</span></td>
                 <td>${v.exam_name}</td>
                 <td><span style="color:#DC2626; font-weight:500;">${v.violation_type}</span></td>
+                <td><span class="status-badge" style="
+                    background-color: ${v.review_status === 'Resolved' ? '#DCFCE7' : v.review_status === 'Dismissed' ? '#F1F5F9' : '#FEF2F2'};
+                    color: ${v.review_status === 'Resolved' ? '#16A34A' : v.review_status === 'Dismissed' ? '#64748B' : '#DC2626'};
+                    padding: 4px 8px; border-radius: 12px; font-size: 0.75rem;
+                ">
+                    ${v.review_status}
+                </span></td>
                 <td>${new Date(v.timestamp).toLocaleTimeString()}</td>
             </tr>
         `).join('');

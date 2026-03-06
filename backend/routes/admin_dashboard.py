@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from db import get_connection
 from security import get_current_user
 from datetime import date
@@ -27,6 +27,9 @@ def get_admin_dashboard_stats(user=Depends(get_current_user)):
         cursor.execute("SELECT COUNT(*) as c FROM student WHERE department_id = %s", (dept_id,))
         stats["total_students"] = cursor.fetchone()["c"]
 
+        cursor.execute("SELECT COUNT(*) as c FROM section WHERE department_id = %s", (dept_id,))
+        stats["total_sections"] = cursor.fetchone()["c"]
+
         cursor.execute("SELECT COUNT(*) as c FROM teacher WHERE department_id = %s", (dept_id,))
         stats["total_teachers"] = cursor.fetchone()["c"]
 
@@ -44,7 +47,12 @@ def get_admin_dashboard_stats(user=Depends(get_current_user)):
 
         # 2. Recent Activity
         cursor.execute("""
-            SELECT e.exam_name, e.date, e.status, e.exam_scope, e.batch_year, e.semester,
+            SELECT e.exam_name, e.date, 
+                   CASE
+                       WHEN e.status = 'completed' THEN 'completed'
+                       WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
+                       ELSE e.status
+                   END as status, e.exam_scope, e.batch_year, e.semester,
                    GROUP_CONCAT(CONCAT(s.section_name, ' (', s.batch_year, ', Sem ', s.semester, ')') SEPARATOR ', ') as section_details
             FROM exam e
             LEFT JOIN exam_section es ON e.exam_id = es.exam_id
@@ -105,6 +113,228 @@ def get_admin_dashboard_stats(user=Depends(get_current_user)):
 
         return stats
 
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/admin/violations/stats")
+def get_admin_violation_stats(status: str = Query(None), user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # Get Admin Dept
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_row = cursor.fetchone()
+        if not admin_row:
+            raise HTTPException(status_code=400, detail="Admin not assigned to department")
+        dept_id = admin_row["department_id"]
+
+        # Base filter
+        base_where = "s.department_id = %s"
+        params = [dept_id]
+        
+        if status:
+            base_where += " AND v.review_status = %s"
+            params.append(status)
+
+        stats = {}
+        
+        # 1. Summary Cards
+        cursor.execute(f"""
+            SELECT COUNT(v.violation_id) as c 
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            WHERE {base_where} AND DATE(v.`timestamp`) = CURDATE()
+        """, tuple(params))
+        stats["today"] = cursor.fetchone()["c"]
+        
+        cursor.execute(f"""
+            SELECT COUNT(v.violation_id) as c 
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            WHERE {base_where} AND YEARWEEK(v.`timestamp`, 1) = YEARWEEK(CURDATE(), 1)
+        """, tuple(params))
+        stats["week"] = cursor.fetchone()["c"]
+        
+        cursor.execute(f"""
+            SELECT COUNT(DISTINCT v.student_id) as c 
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            WHERE {base_where}
+        """, tuple(params))
+        stats["students_flagged"] = cursor.fetchone()["c"]
+        
+        cursor.execute(f"""
+            SELECT COUNT(DISTINCT v.exam_id) as c 
+            FROM violation v
+            JOIN exam e ON v.exam_id = e.exam_id
+            JOIN student s ON v.student_id = s.student_id
+            WHERE {base_where}
+        """, tuple(params))
+        stats["exams_affected"] = cursor.fetchone()["c"]
+
+        # 2. Trend (Last 7 Days)
+        cursor.execute(f"""
+            SELECT DATE_FORMAT(v.`timestamp`, '%Y-%m-%d') as date, COUNT(v.violation_id) as count 
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            WHERE {base_where} AND v.`timestamp` >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) 
+            GROUP BY DATE_FORMAT(v.`timestamp`, '%Y-%m-%d')
+            ORDER BY date ASC
+        """, tuple(params))
+        stats["trend"] = cursor.fetchall()
+
+        # 3. By Type
+        cursor.execute(f"""
+            SELECT v.violation_type, COUNT(v.violation_id) as count 
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            WHERE {base_where}
+            GROUP BY v.violation_type
+        """, tuple(params))
+        stats["by_type"] = cursor.fetchall()
+
+        # 4. Recent Violations
+        cursor.execute(f"""
+            SELECT v.violation_id, s.name, s.usn, d.department_name, e.exam_name, v.violation_type, v.`timestamp`, v.review_status
+            FROM violation v 
+            JOIN student s ON v.student_id = s.student_id 
+            JOIN department d ON s.department_id = d.department_id
+            JOIN exam e ON v.exam_id = e.exam_id 
+            WHERE {base_where}
+            ORDER BY v.`timestamp` DESC LIMIT 10
+        """, tuple(params))
+        stats["recent"] = cursor.fetchall()
+
+        # 5. High Risk Students
+        # For high risk, we might want to ignore the status filter to show overall risk, 
+        # but the request implies filtering. Let's filter.
+        cursor.execute(f"""
+            SELECT s.name, s.usn, COUNT(v.violation_id) as violation_count 
+            FROM violation v 
+            JOIN student s ON v.student_id = s.student_id 
+            WHERE {base_where}
+            GROUP BY s.student_id 
+            HAVING violation_count > 1 
+            ORDER BY violation_count DESC LIMIT 5
+        """, tuple(params))
+        stats["high_risk"] = cursor.fetchall()
+
+        # 6. Violations by Exam
+        cursor.execute(f"""
+            SELECT e.exam_name, COUNT(v.violation_id) as count
+            FROM violation v
+            JOIN exam e ON v.exam_id = e.exam_id
+            JOIN student s ON v.student_id = s.student_id
+            WHERE {base_where}
+            GROUP BY e.exam_id
+            ORDER BY count DESC LIMIT 5
+        """, tuple(params))
+        stats["by_exam"] = cursor.fetchall()
+
+        # 7. Alerts
+        alerts = []
+        if stats["today"] > 5:
+            alerts.append({"type": "critical", "message": f"High violation activity today: {stats['today']} incidents."})
+        
+        for exam in stats["by_exam"]:
+            if exam["count"] >= 3:
+                 alerts.append({"type": "warning", "message": f"Exam '{exam['exam_name']}' has {exam['count']} violations."})
+                 
+        stats["alerts"] = alerts
+
+        return stats
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/admin/violations/{violation_id}")
+def get_violation_details(violation_id: int, user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # Verify department access
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        dept_id = cursor.fetchone()["department_id"]
+        
+        cursor.execute("""
+            SELECT v.*, s.name as student_name, s.usn, e.exam_name, q.question_text
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            JOIN exam e ON v.exam_id = e.exam_id
+            LEFT JOIN question q ON v.question_id = q.question_id
+            WHERE v.violation_id = %s AND s.department_id = %s
+        """, (violation_id, dept_id))
+        
+        violation = cursor.fetchone()
+        if not violation:
+            raise HTTPException(status_code=404, detail="Violation not found")
+            
+        # Fetch Evidence
+        cursor.execute("""
+            SELECT evidence_id, camera_image_path, screenshot_path, captured_time
+            FROM evidence
+            WHERE violation_id = %s
+        """, (violation_id,))
+        violation["evidence"] = cursor.fetchall()
+
+        return violation
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.put("/admin/violations/{violation_id}/resolve")
+def resolve_violation(
+    violation_id: int, 
+    status: str = Body(...), 
+    remarks: str = Body(None),
+    user=Depends(get_current_user)
+):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Verify department access (via student)
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        dept_id = cursor.fetchone()["department_id"]
+        
+        # Check existence and access in one go
+        cursor.execute("""
+            UPDATE violation v JOIN student s ON v.student_id = s.student_id 
+            SET v.review_status = %s, v.admin_remarks = %s 
+            WHERE v.violation_id = %s AND s.department_id = %s
+        """, (status, remarks, violation_id, dept_id))
+        
+        if cursor.rowcount == 0:
+             # Either not found or no change, but for security we assume access denied or not found
+             # To be precise we could select first, but this is efficient.
+             pass 
+        
+        # Auto-flag High Risk Student
+        if status == 'Resolved':
+            cursor.execute("""
+                SELECT v.student_id FROM violation v 
+                JOIN student s ON v.student_id = s.student_id 
+                WHERE v.violation_id = %s AND s.department_id = %s
+            """, (violation_id, dept_id))
+            row = cursor.fetchone()
+            if row:
+                student_id = row[0]
+                cursor.execute("SELECT COUNT(*) FROM violation WHERE student_id = %s AND review_status = 'Resolved'", (student_id,))
+                count = cursor.fetchone()[0]
+                if count > 3:
+                    cursor.execute("UPDATE student SET risk_status = 'High Risk' WHERE student_id = %s", (student_id,))
+
+        conn.commit()
+        return {"message": f"Violation marked as {status}"}
     finally:
         cursor.close()
         conn.close()

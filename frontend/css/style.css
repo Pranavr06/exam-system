@@ -467,6 +467,7 @@ td button:hover { opacity: 0.8; }
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);
 }
 
+.status-badge { text-transform: capitalize; }
 .status-badge.active { color: #28a745; font-weight: bold; }
 .status-badge.scheduled { color: #ffc107; font-weight: bold; }
 .status-badge.completed { color: #6c757d; font-weight: bold; }

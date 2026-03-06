@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from db import get_connection
 from security import get_current_user
 from datetime import datetime, timedelta
@@ -79,7 +79,7 @@ def auto_finalize_if_expired(cursor, student_id, exam_id):
 
 # 🚀 START EXAM
 @router.post("/student/exams/start")
-def start_exam(exam_id: int, user=Depends(get_current_user)):
+def start_exam(exam_id: int = Body(..., embed=True), user=Depends(get_current_user)):
     if user["role"] != "student":
         raise HTTPException(status_code=403)
 
@@ -161,9 +161,9 @@ def get_exam_questions(exam_id: int, user=Depends(get_current_user)):
 # 🚀 SUBMIT ANSWER
 @router.post("/student/exams/submit-answer")
 def submit_answer(
-    exam_id: int,
-    question_id: int,
-    selected_option_id: int,
+    exam_id: int = Body(...),
+    question_id: int = Body(...),
+    selected_option_id: int = Body(...),
     user=Depends(get_current_user),
 ):
     conn = get_connection()
@@ -233,7 +233,7 @@ def submit_answer(
 
 # 🚀 MANUAL FINISH
 @router.post("/student/exams/finish")
-def finish_exam(exam_id: int, user=Depends(get_current_user)):
+def finish_exam(exam_id: int = Body(..., embed=True), user=Depends(get_current_user)):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
 

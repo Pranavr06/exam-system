@@ -14,6 +14,8 @@
         <button type="button" data-section="dashboard" onclick="showSection('dashboard')" class="active"><i class="fas fa-tachometer-alt fa-fw"></i> Dashboard</button>
         <button type="button" data-section="upcoming" onclick="showSection('upcoming')"><i class="fas fa-calendar-alt fa-fw"></i> Upcoming Exams</button>
         <button type="button" data-section="history" onclick="showSection('history')"><i class="fas fa-history fa-fw"></i> Exam History</button>
+        <button type="button" data-section="academic" onclick="showSection('academic')"><i class="fas fa-user-graduate fa-fw"></i> My Academic Info</button>
+        <button type="button" data-section="violations" onclick="showSection('violations')"><i class="fas fa-exclamation-triangle fa-fw"></i> Violations</button>
         <button type="button" onclick="logout()" class="logout"><i class="fas fa-sign-out-alt fa-fw"></i> Logout</button>
     </div>
 
@@ -46,6 +48,15 @@
                         <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
                             <table id="dashboard-upcoming-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
                                 <thead><tr><th>Exam</th><th>Subject</th><th>Date</th><th>Action</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+
+                        <!-- Recent Results (New) -->
+                        <h4 class="section-title" style="font-size: 1.2rem; margin: 25px 0 15px 0;">Recent Results</h4>
+                        <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                            <table id="dashboard-results-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                                <thead><tr><th>Exam</th><th>Subject</th><th>Score</th><th>Result</th></tr></thead>
                                 <tbody></tbody>
                             </table>
                         </div>
@@ -95,6 +106,42 @@
                                 <th>Date Taken</th>
                             </tr>
                         </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 4. My Academic Info Section -->
+            <div id="academic-section" class="form-container">
+                <h3 class="section-title">My Academic Info</h3>
+                
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; flex-wrap: wrap;">
+                    <!-- Student Details Card -->
+                    <div class="card-box" style="flex: 1; min-width: 300px; background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <h4 style="margin-top: 0; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px;">Student Profile</h4>
+                        <div id="academic-profile-details" style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
+                            <!-- Populated by JS -->
+                            <div class="spinner"></div>
+                        </div>
+                    </div>
+
+                    <!-- Subjects & Teachers -->
+                    <div class="card-box" style="flex: 2; min-width: 350px; background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                        <div style="padding: 15px 20px; background: #f8f9fa; border-bottom: 1px solid #eee; font-weight: 600; color: #2c3e50;">Assigned Subjects & Teachers</div>
+                        <table id="academic-subjects-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                            <thead><tr><th>Subject</th><th>Teacher</th><th>Email</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. Violations Section -->
+            <div id="violations-section" class="form-container">
+                <h3 class="section-title">Violation Record</h3>
+                <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                    <table id="violations-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                        <thead><tr><th>Violation Type</th><th>Exam</th><th>Date & Time</th><th>Evidence</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>

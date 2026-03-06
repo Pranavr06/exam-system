@@ -17,6 +17,7 @@
         <button type="button" data-section="questions" onclick="showSection('questions')"><i class="fas fa-question-circle fa-fw"></i> Add Questions</button>
         <button type="button" data-section="my-exams" onclick="resetFilterAndShowExams()"><i class="fas fa-list-alt fa-fw"></i> My Exams</button>
         <button type="button" data-section="results" onclick="showSection('results')"><i class="fas fa-poll fa-fw"></i> View Results</button>
+        <button type="button" data-section="violations" onclick="showSection('violations')"><i class="fas fa-exclamation-triangle fa-fw"></i> Violations</button>
         <button type="button" data-section="activity-logs" onclick="showSection('activity-logs')"><i class="fas fa-history fa-fw"></i> Activity Logs</button>
         <button type="button" onclick="logout()" class="logout"><i class="fas fa-sign-out-alt fa-fw"></i> Logout</button>
     </div>
@@ -323,6 +324,40 @@
                 <div id="teacher-activity-logs-pagination" style="margin-top: 15px; display: flex; justify-content: center; gap: 5px;"></div>
             </div>
 
+            <!-- 9. Violations Section -->
+            <div id="violations-section" class="form-container">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e9ecef; margin-bottom: 20px; padding-bottom: 10px;">
+                    <h3 class="section-title" style="margin: 0; border: none; padding: 0;">Exam Violations</h3>
+                    <select id="teacher-violation-filter-status" onchange="loadTeacherViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
+                        <option value="">All Statuses</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Resolved">Resolved</option>
+                        <option value="Dismissed">Dismissed</option>
+                    </select>
+                </div>
+                
+                <!-- Summary Cards -->
+                <div class="dashboard-grid" id="teacher-violation-summary-cards" style="margin-bottom: 30px;">
+                    <div class="spinner"></div>
+                </div>
+
+                <!-- Recent Violations Table -->
+                <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                    <div style="padding: 15px 20px; background: #f8f9fa; border-bottom: 1px solid #eee; font-weight: 600; color: #2c3e50;">Recent Violations</div>
+                    <table id="teacher-recent-violations-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                        <thead><tr>
+                            <th>Student</th>
+                            <th>Exam</th>
+                            <th>Violation</th>
+                            <th>Status</th>
+                            <th>Time</th>
+                            <th>Evidence</th>
+                        </tr></thead>
+                        <tbody id="teacher-recent-violations-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
             <!-- View Attempts Modal -->
             <div id="attempts-modal" class="modal">
                 <div class="modal-content large">
@@ -344,6 +379,22 @@
                         <thead><tr><th>USN</th><th>Name</th><th>Email</th></tr></thead>
                         <tbody></tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- Violation Evidence Modal -->
+            <div id="evidence-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close-btn" onclick="closeEvidenceModal()">&times;</span>
+                    <h3 style="margin-bottom: 15px; color: #2c3e50;">Violation Evidence</h3>
+                    <div id="evidence-content" style="text-align: left; margin-bottom: 20px; font-size: 0.95rem; line-height: 1.6;">
+                        <!-- Populated by JS -->
+                    </div>
+                    <div id="evidence-actions" class="modal-actions">
+                        <textarea id="violation-remarks" placeholder="Enter remarks (optional)..." style="width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px; min-height: 60px;"></textarea>
+                        <button onclick="resolveViolation('Dismissed')" class="submit-btn btn-secondary">Dismiss</button>
+                        <button onclick="resolveViolation('Resolved')" class="submit-btn">Confirm</button>
+                    </div>
                 </div>
             </div>
 

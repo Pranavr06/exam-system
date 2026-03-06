@@ -21,6 +21,7 @@
         <button type="button" data-section="exam" onclick="showSection('exam')"><i class="fas fa-file-alt fa-fw"></i> Create Exam</button>
         <button type="button" data-section="question" onclick="showSection('question')"><i class="fas fa-question-circle fa-fw"></i> Add Questions</button>
         <button type="button" data-section="result" onclick="showSection('result')"><i class="fas fa-poll fa-fw"></i> View Results</button>
+        <button type="button" data-section="violations" onclick="showSection('violations')"><i class="fas fa-exclamation-triangle fa-fw"></i> Violations</button>
         <button type="button" data-section="logs" onclick="showSection('logs')"><i class="fas fa-clipboard-list fa-fw"></i> System Logs</button>
     </div>
 
@@ -455,6 +456,66 @@
             </div>
         </div>
 
+        <!-- 9. Violations Section -->
+        <div id="violations-section" class="form-container">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e9ecef; margin-bottom: 20px; padding-bottom: 10px;">
+                <h3 class="section-title" style="margin: 0; border: none; padding: 0;">Department Violation Monitoring</h3>
+                <select id="violation-filter-status" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
+                    <option value="">All Statuses</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Resolved">Resolved</option>
+                    <option value="Dismissed">Dismissed</option>
+                </select>
+            </div>
+            
+            <!-- Summary Cards -->
+            <div class="dashboard-grid" id="violation-summary-cards">
+                <div class="spinner"></div>
+            </div>
+            
+            <!-- Charts Row -->
+            <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-top: 30px; flex-wrap: wrap;">
+                <div class="card-box" style="flex: 2; min-width: 400px; background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <h4 style="margin-top: 0; color: #2c3e50;">Violation Trend (Last 7 Days)</h4>
+                    <canvas id="violationTrendChart" style="max-height: 300px;"></canvas>
+                </div>
+                <div class="card-box" style="flex: 1; min-width: 300px; background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <h4 style="margin-top: 0; color: #2c3e50;">Violation Types</h4>
+                    <canvas id="violationTypeChart" style="max-height: 250px;"></canvas>
+                </div>
+            </div>
+
+            <!-- Alerts & By Exam Row -->
+            <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-top: 30px; flex-wrap: wrap;">
+                <div class="card-box" style="flex: 1; min-width: 300px; background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; border-left: 4px solid #F59E0B;">
+                    <h4 style="margin-top: 0; color: #B45309;">Integrity Alerts</h4>
+                    <div id="violation-alerts-container" class="activity-feed"></div>
+                </div>
+                <div class="card-box" style="flex: 1; min-width: 300px; background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <h4 style="margin-top: 0; color: #2c3e50;">Violations by Exam</h4>
+                    <canvas id="violationByExamChart" style="max-height: 250px;"></canvas>
+                </div>
+            </div>
+
+            <!-- Tables Row -->
+            <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-top: 30px; flex-wrap: wrap;">
+                <div class="card-box" style="flex: 2; min-width: 400px; background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                    <div style="padding: 15px 20px; background: #f8f9fa; border-bottom: 1px solid #eee; font-weight: 600; color: #2c3e50;">Recent Violations</div>
+                    <table id="recent-violations-full-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                        <thead><tr><th>Student</th><th>Exam</th><th>Violation</th><th>Status</th><th>Time</th><th>Evidence</th></tr></thead>
+                        <tbody id="recent-violations-full-body"></tbody>
+                    </table>
+                </div>
+                <div class="card-box" style="flex: 1; min-width: 300px; background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                    <div style="padding: 15px 20px; background: #f8f9fa; border-bottom: 1px solid #eee; font-weight: 600; color: #2c3e50;">High Risk Students</div>
+                    <table id="high-risk-students-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                        <thead><tr><th>Student</th><th>Count</th></tr></thead>
+                        <tbody id="high-risk-students-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- 9. System Logs -->
         <div id="logs-section" class="form-container">
             <h3 class="section-title">Department System Logs</h3>
@@ -529,6 +590,22 @@
                     </thead>
                     <tbody></tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Violation Evidence Modal -->
+    <div id="evidence-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeEvidenceModal()">&times;</span>
+            <h3 style="margin-bottom: 15px; color: #2c3e50;">Violation Evidence</h3>
+            <div id="evidence-content" style="text-align: left; margin-bottom: 20px; font-size: 0.95rem; line-height: 1.6;">
+                <!-- Populated by JS -->
+            </div>
+            <div id="evidence-actions" class="modal-actions">
+                <textarea id="violation-remarks" placeholder="Enter remarks (optional)..." style="width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px; min-height: 60px;"></textarea>
+                <button onclick="resolveViolation('Dismissed')" class="submit-btn btn-secondary">Dismiss (False Alarm)</button>
+                <button onclick="resolveViolation('Resolved')" class="submit-btn">Confirm Violation</button>
             </div>
         </div>
     </div>

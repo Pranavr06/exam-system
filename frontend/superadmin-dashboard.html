@@ -233,7 +233,15 @@
 
             <!-- 6. Violations Section (Integrity Monitoring) -->
             <div id="violations-section" class="form-container">
-                <h3 class="section-title">Exam Integrity & Violation Monitoring</h3>
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e9ecef; margin-bottom: 20px; padding-bottom: 10px;">
+                    <h3 class="section-title" style="margin: 0; border: none; padding: 0;">Exam Integrity & Violation Monitoring</h3>
+                    <select id="sa-violation-filter-status" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
+                        <option value="">All Statuses</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Resolved">Resolved</option>
+                        <option value="Dismissed">Dismissed</option>
+                    </select>
+                </div>
                 
                 <!-- Summary Cards -->
                 <div class="sa-dashboard-grid" id="violation-summary-cards">
@@ -269,7 +277,7 @@
                     <div class="sa-card" style="flex: 2; min-width: 400px; margin-top: 0;">
                         <div class="sa-card-header"><h3 class="sa-card-title">Recent Violations</h3></div>
                         <table class="sa-table" id="recent-violations-full-table">
-                            <thead><tr><th>Student</th><th>Dept</th><th>Exam</th><th>Violation</th><th>Time</th></tr></thead>
+                            <thead><tr><th>Student</th><th>Dept</th><th>Exam</th><th>Violation</th><th>Status</th><th>Time</th></tr></thead>
                             <tbody id="recent-violations-full-body"></tbody>
                         </table>
                     </div>

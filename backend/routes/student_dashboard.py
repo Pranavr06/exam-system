@@ -73,12 +73,26 @@ def get_student_dashboard_stats(user=Depends(get_current_user)):
         """, (student_id,))
         performance_data = cursor.fetchall()
 
+        # 6. Recent Results (Limit 5)
+        cursor.execute("""
+            SELECT e.exam_name, s.subject_name, r.total_marks as obtained_marks, e.total_marks as max_marks, 
+                   r.result_status, r.generated_time
+            FROM result r
+            JOIN exam e ON r.exam_id = e.exam_id
+            JOIN subject s ON e.subject_id = s.subject_id
+            WHERE r.student_id = %s
+            ORDER BY r.generated_time DESC
+            LIMIT 5
+        """, (student_id,))
+        recent_results = cursor.fetchall()
+
         return {
             "upcoming_exams": upcoming_count,
             "completed_exams": completed_count,
             "average_score": round(avg_score, 1),
             "violations": violations_count,
-            "performance": performance_data
+            "performance": performance_data,
+            "recent_results": recent_results
         }
     finally:
         cursor.close()
@@ -100,17 +114,71 @@ def get_student_upcoming_exams(user=Depends(get_current_user)):
         section_id = student["section_id"]
 
         cursor.execute("""
-            SELECT e.exam_id, e.exam_name, s.subject_name, e.date, e.duration, e.status, e.total_marks,
+            SELECT e.exam_id, e.exam_name, s.subject_name, e.date, e.duration, 
+                   CASE
+                       WHEN e.status = 'completed' THEN 'completed'
+                       WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
+                       ELSE e.status
+                   END as status, e.total_marks,
                    a.status as attempt_status
             FROM exam e
             JOIN exam_section es ON e.exam_id = es.exam_id
             JOIN subject s ON e.subject_id = s.subject_id
             LEFT JOIN attempt a ON e.exam_id = a.exam_id AND a.student_id = %s
             WHERE es.section_id = %s 
-            AND e.status IN ('scheduled', 'active')
             AND (a.attempt_id IS NULL OR a.status = 'IN_PROGRESS')
+            HAVING status IN ('scheduled', 'active')
             ORDER BY e.date ASC
         """, (user["user_id"], section_id))
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/student/academic-info")
+def get_student_academic_info(user=Depends(get_current_user)):
+    if user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # Student Details
+        cursor.execute("""
+            SELECT s.name, s.usn, s.email, sec.batch_year, s.semester, 
+                   d.department_name, sec.section_name
+            FROM student s
+            JOIN department d ON s.department_id = d.department_id
+            JOIN section sec ON s.section_id = sec.section_id
+            WHERE s.student_id = %s
+        """, (user["user_id"],))
+        student_info = cursor.fetchone()
+
+        # Subjects & Teachers
+        cursor.execute("""
+            SELECT sub.subject_name, t.name as teacher_name, t.email as teacher_email
+            FROM student s
+            JOIN teaching_assignment ta ON s.section_id = ta.section_id
+            JOIN subject sub ON ta.subject_id = sub.subject_id
+            JOIN teacher t ON ta.teacher_id = t.teacher_id
+            WHERE s.student_id = %s
+        """, (user["user_id"],))
+        subjects = cursor.fetchall()
+
+        return {"info": student_info, "subjects": subjects}
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/student/violations")
+def get_student_violations(user=Depends(get_current_user)):
+    if user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT * FROM violation WHERE student_id = %s ORDER BY timestamp DESC", (user["user_id"],))
         return cursor.fetchall()
     finally:
         cursor.close()

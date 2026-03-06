@@ -103,6 +103,9 @@ function showSection(sectionName) {
     if (sectionName === 'result') {
         loadResults();
     }
+    if (sectionName === 'violations') {
+        loadViolationAnalytics();
+    }
     if (sectionName === 'logs') {
         loadSystemLogs();
     }
@@ -117,30 +120,30 @@ async function loadDashboardStats() {
         if (container) {
             // 1. Summary Cards
             container.innerHTML = `
-                <div class="stat-card" onclick="showSection('student')">
-                    <div class="stat-value">${stats.total_students}</div>
-                    <div class="stat-label">Students</div>
-                    <div class="stat-icon">🎓</div>
-                </div>
-                <div class="stat-card" onclick="showSection('teacher')">
-                    <div class="stat-value">${stats.total_teachers}</div>
-                    <div class="stat-label">Teachers</div>
-                    <div class="stat-icon">👨‍🏫</div>
+                <div class="stat-card" onclick="showSection('section')">
+                    <div class="stat-value">${stats.total_sections}</div>
+                    <div class="stat-label">Sections</div>
+                    <div class="stat-icon">🏢</div>
                 </div>
                 <div class="stat-card" onclick="showSection('subject')">
                     <div class="stat-value">${stats.total_subjects}</div>
                     <div class="stat-label">Subjects</div>
                     <div class="stat-icon">📚</div>
                 </div>
+                <div class="stat-card" onclick="showSection('teacher')">
+                    <div class="stat-value">${stats.total_teachers}</div>
+                    <div class="stat-label">Teachers</div>
+                    <div class="stat-icon">👨‍🏫</div>
+                </div>
+                <div class="stat-card" onclick="showSection('student')">
+                    <div class="stat-value">${stats.total_students}</div>
+                    <div class="stat-label">Students</div>
+                    <div class="stat-icon">🎓</div>
+                </div>
                 <div class="stat-card" onclick="showSection('exam')">
                     <div class="stat-value">${stats.total_exams}</div>
                     <div class="stat-label">Exams</div>
                     <div class="stat-icon">📝</div>
-                </div>
-                <div class="stat-card" style="border-bottom: 4px solid #28a745;">
-                    <div class="stat-value" style="color: #28a745;">${stats.active_exams}</div>
-                    <div class="stat-label">Active</div>
-                    <div class="stat-icon">🟢</div>
                 </div>
             `;
         }
@@ -829,10 +832,11 @@ async function loadExamsList() {
                 <div class="question-content">
                     <strong>${e.exam_name} <span style="font-weight:normal; font-size:0.85em; color:#666;">${scopeLabel}</span></strong>
                     <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">
-                        Marks: ${e.total_marks} | Duration: ${e.duration}m | Status: <span style="text-transform: capitalize;">${e.status}</span>
+                        Marks: ${e.total_marks} | Duration: ${e.duration}m | Status: <span class="status-badge ${e.status}">${e.status}</span>
                     </div>
                 </div>
                 <div class="question-actions">
+                    <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;">+Q</button>
                     ${e.status !== 'active' ? 
                         `<button onclick="publishExam(${e.exam_id})" class="btn-edit" style="background-color: #17a2b8; color: white;">Publish</button>` : ''
                     }
@@ -846,6 +850,16 @@ async function loadExamsList() {
     } catch (error) {
         console.error("Failed to load exams", error);
         container.innerHTML = '<p style="color: red;">Error loading exams.</p>';
+    }
+}
+
+function goToAddQuestions(examId) {
+    showSection('question');
+    resetQuestionForm();
+    const select = document.getElementById('question-exam-id');
+    if (select) {
+        select.value = examId;
+        select.dispatchEvent(new Event('change'));
     }
 }
 
@@ -1009,7 +1023,12 @@ async function editEntity(type, id) {
             document.querySelector('input[name="exam_id_hidden"]').value = data.exam_id;
             document.getElementById('exam-name').value = data.exam_name;
             document.getElementById('exam-subject').value = data.subject_id;
-            document.getElementById('exam-date').value = data.date.replace(" ", "T");
+            
+            // Format date for datetime-local input (YYYY-MM-DDTHH:MM)
+            let formattedDate = data.date.replace(" ", "T");
+            if (formattedDate.length > 16) formattedDate = formattedDate.substring(0, 16);
+            document.getElementById('exam-date').value = formattedDate;
+
             document.getElementById('exam-duration').value = data.duration;
             document.getElementById('exam-total-marks').value = data.total_marks;
             document.getElementById('exam-scope').value = data.exam_scope;
@@ -1018,12 +1037,17 @@ async function editEntity(type, id) {
             const event = new Event('change');
             document.getElementById('exam-scope').dispatchEvent(event);
             
-            // Wait for UI update then set section if needed
-            if (data.exam_scope === 'SECTION') {
-                // We need to fetch assigned section. For simplicity, we might need another call or just assume single section logic for now.
-                // Since create exam only allows one section initially, we can try to set it if available.
-                // Note: The current GET /admin/exams/{id} doesn't return assigned section. 
-                // For full edit support of section assignment, we'd need to fetch that too.
+            // Populate scope-specific fields
+            if (data.exam_scope === 'BATCH') {
+                if (data.batch_year) document.getElementById('exam-batch-year').value = data.batch_year;
+                if (data.semester) document.getElementById('exam-semester').value = data.semester;
+            } else if (data.exam_scope === 'SECTION') {
+                // Try to populate section if available in response
+                if (data.section_id) {
+                    document.getElementById('exam-section-select').value = data.section_id;
+                } else if (data.section_ids && data.section_ids.length > 0) {
+                    document.getElementById('exam-section-select').value = data.section_ids[0];
+                }
             }
 
             toggleEditMode('exam', true);
@@ -1168,6 +1192,262 @@ function exportResults() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+}
+
+// --- Violation Analytics ---
+async function loadViolationAnalytics() {
+    const container = document.getElementById('violation-summary-cards');
+    container.innerHTML = '<div class="spinner"></div>';
+    const status = document.getElementById('violation-filter-status').value;
+    
+    try {
+        let url = '/admin/violations/stats';
+        if (status) url += `?status=${status}`;
+        const stats = await apiRequest(url);
+        
+        // 1. Summary Cards
+        container.innerHTML = `
+            <div class="stat-card">
+                <div class="stat-value" style="color: #DC2626;">${stats.today}</div>
+                <div class="stat-label">Violations Today</div>
+                <div class="stat-icon">⚠️</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color: #D97706;">${stats.week}</div>
+                <div class="stat-label">This Week</div>
+                <div class="stat-icon">📅</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color: #4F46E5;">${stats.students_flagged}</div>
+                <div class="stat-label">Students Flagged</div>
+                <div class="stat-icon">🎓</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color: #4B5563;">${stats.exams_affected}</div>
+                <div class="stat-label">Exams Affected</div>
+                <div class="stat-icon">📝</div>
+            </div>
+        `;
+
+        // 2. Charts
+        renderViolationTrendChart(stats.trend);
+        renderViolationTypeChart(stats.by_type);
+        renderViolationByExamChart(stats.by_exam);
+
+        // 3. Alerts
+        const alertsContainer = document.getElementById('violation-alerts-container');
+        const dismissed = JSON.parse(localStorage.getItem('dismissed_alerts') || '[]');
+        const activeAlerts = stats.alerts.filter(a => !dismissed.includes(a.message));
+
+        if (activeAlerts.length === 0) {
+            alertsContainer.innerHTML = '<div class="alert-box success">✅ No active alerts.</div>';
+        } else {
+            alertsContainer.innerHTML = activeAlerts.map(a => `
+                <div class="activity-item violation" style="justify-content: space-between; align-items: flex-start;">
+                    <div style="display:flex; gap:12px;">
+                        <div class="act-icon"><i class="fas fa-exclamation-triangle"></i></div>
+                        <div class="act-content"><strong>Alert</strong><br>${a.message}</div>
+                    </div>
+                    <button onclick="dismissAlert('${a.message.replace(/'/g, "\\'")}')" style="background:none; border:none; color:#999; cursor:pointer; font-size:1.2rem; line-height:1;">&times;</button>
+                </div>
+            `).join('');
+        }
+
+        // 4. Recent Violations Table
+        const recentBody = document.getElementById('recent-violations-full-body');
+        recentBody.innerHTML = stats.recent.map(v => `
+            <tr>
+                <td><strong>${v.name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
+                <td>${v.exam_name}</td>
+                <td><span style="color:#DC2626; font-weight:500;">${v.violation_type}</span></td>
+                <td><span class="status-badge" style="
+                    background-color: ${v.review_status === 'Resolved' ? '#DCFCE7' : v.review_status === 'Dismissed' ? '#F1F5F9' : '#FEF2F2'};
+                    color: ${v.review_status === 'Resolved' ? '#16A34A' : v.review_status === 'Dismissed' ? '#64748B' : '#DC2626'};
+                    padding: 4px 8px; border-radius: 12px; font-size: 0.75rem;
+                ">
+                    ${v.review_status}
+                </span></td>
+                <td>${new Date(v.timestamp).toLocaleTimeString()}</td>
+                <td><button class="btn-action" onclick="viewEvidence(${v.violation_id})">Review</button></td>
+            </tr>
+        `).join('');
+
+        // 5. High Risk Students
+        const riskBody = document.getElementById('high-risk-students-body');
+        riskBody.innerHTML = stats.high_risk.map(s => `
+            <tr>
+                <td><strong>${s.name}</strong> <br><span style="font-size:0.8em; color:#666;">${s.usn}</span></td>
+                <td><span class="status-badge" style="background:#FEE2E2; color:#DC2626; padding: 4px 8px; border-radius: 4px;">${s.violation_count} Violations</span></td>
+            </tr>
+        `).join('');
+
+    } catch (error) {
+        console.error("Failed to load violation stats", error);
+        container.innerHTML = '<p style="color:red">Error loading data.</p>';
+    }
+}
+
+function dismissAlert(message) {
+    const dismissed = JSON.parse(localStorage.getItem('dismissed_alerts') || '[]');
+    if (!dismissed.includes(message)) {
+        dismissed.push(message);
+        localStorage.setItem('dismissed_alerts', JSON.stringify(dismissed));
+    }
+    loadViolationAnalytics(); // Refresh to hide
+}
+
+let vTrendChart = null;
+function renderViolationTrendChart(data) {
+    const ctx = document.getElementById('violationTrendChart');
+    if (!ctx) return;
+    if (vTrendChart) vTrendChart.destroy();
+
+    vTrendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => new Date(d.date).toLocaleDateString(undefined, {weekday:'short'})),
+            datasets: [{
+                label: 'Violations',
+                data: data.map(d => d.count),
+                borderColor: '#DC2626',
+                backgroundColor: 'rgba(220, 38, 38, 0.1)',
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+    });
+}
+
+let vTypeChart = null;
+function renderViolationTypeChart(data) {
+    const ctx = document.getElementById('violationTypeChart');
+    if (!ctx) return;
+    if (vTypeChart) vTypeChart.destroy();
+
+    vTypeChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: data.map(d => d.violation_type),
+            datasets: [{
+                data: data.map(d => d.count),
+                backgroundColor: ['#EF4444', '#F59E0B', '#3B82F6', '#10B981', '#6366F1']
+            }]
+        },
+        options: { responsive: true, plugins: { legend: { position: 'right' } } }
+    });
+}
+
+let vExamChart = null;
+function renderViolationByExamChart(data) {
+    const ctx = document.getElementById('violationByExamChart');
+    if (!ctx) return;
+    if (vExamChart) vExamChart.destroy();
+
+    vExamChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.exam_name),
+            datasets: [{
+                label: 'Violations',
+                data: data.map(d => d.count),
+                backgroundColor: '#8B5CF6'
+            }]
+        },
+        options: {
+            responsive: true,
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
+        }
+    });
+}
+
+let currentViolationId = null;
+
+async function viewEvidence(id) {
+    currentViolationId = id;
+    const modal = document.getElementById('evidence-modal');
+    const content = document.getElementById('evidence-content');
+    const actions = document.getElementById('evidence-actions');
+    
+    modal.style.display = 'block';
+    content.innerHTML = '<div class="spinner"></div>';
+
+    try {
+        const v = await apiRequest(`/admin/violations/${id}`);
+        
+        content.innerHTML = `
+            <p><strong>Student:</strong> ${v.student_name} (${v.usn})</p>
+            <p><strong>Exam:</strong> ${v.exam_name}</p>
+            <p><strong>Violation Type:</strong> <span style="color:#DC2626; font-weight:bold;">${v.violation_type}</span></p>
+            <p><strong>Time:</strong> ${new Date(v.timestamp).toLocaleString()}</p>
+            <p><strong>Confidence Score:</strong> ${v.confidence_score}</p>
+            <p><strong>Status:</strong> <span style="font-weight:bold; color:${v.review_status === 'Resolved' ? 'green' : v.review_status === 'Dismissed' ? 'gray' : 'red'}">${v.review_status}</span></p>
+            
+            ${v.admin_remarks ? `
+                <div style="margin-top:10px; padding:10px; background:#fff3cd; border-left: 4px solid #ffc107; border-radius:4px;">
+                    <strong>Admin Remarks:</strong><br>${v.admin_remarks}
+                </div>
+            ` : ''}
+
+            ${v.question_text ? `<div style="margin-top:10px; padding:10px; background:#f8f9fa; border-radius:4px;"><strong>Related Question:</strong><br>${v.question_text}</div>` : ''}
+            
+            <div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+                <h4 style="margin-top: 0; color: #2c3e50; font-size: 1rem;">Evidence</h4>
+                ${v.evidence && v.evidence.length > 0 ? 
+                    v.evidence.map(e => `
+                        <div style="margin-bottom: 15px; background: #f8f9fa; padding: 10px; border-radius: 6px;">
+                            <div style="font-size: 0.85rem; color: #666; margin-bottom: 8px;">Captured: ${new Date(e.captured_time).toLocaleTimeString()}</div>
+                            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                                ${e.camera_image_path ? `
+                                    <div style="flex: 1; min-width: 150px;">
+                                        <div style="font-size: 0.8rem; font-weight: 600; margin-bottom: 4px;">Camera</div>
+                                        <img src="${e.camera_image_path}" style="width: 100%; border-radius: 4px; border: 1px solid #ddd;" alt="Camera Evidence">
+                                    </div>
+                                ` : ''}
+                                ${e.screenshot_path ? `
+                                    <div style="flex: 1; min-width: 150px;">
+                                        <div style="font-size: 0.8rem; font-weight: 600; margin-bottom: 4px;">Screenshot</div>
+                                        <img src="${e.screenshot_path}" style="width: 100%; border-radius: 4px; border: 1px solid #ddd;" alt="Screenshot Evidence">
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `).join('') 
+                    : '<p style="color: #666; font-style: italic;">No visual evidence available.</p>'
+                }
+            </div>
+        `;
+
+        // Hide actions if already processed
+        if (v.review_status !== 'Pending' && v.review_status !== 'Under Review') {
+            actions.style.display = 'none';
+        } else {
+            actions.style.display = 'flex';
+        }
+    } catch (error) {
+        content.innerHTML = `<p style="color:red">Error loading evidence: ${error.message}</p>`;
+    }
+}
+
+function closeEvidenceModal() {
+    document.getElementById('evidence-modal').style.display = 'none';
+    currentViolationId = null;
+}
+
+async function resolveViolation(status) {
+    if (!currentViolationId) return;
+    const remarks = document.getElementById('violation-remarks').value;
+    
+    try {
+        await apiRequest(`/admin/violations/${currentViolationId}/resolve`, 'PUT', { status, remarks });
+        alert(`Violation marked as ${status}`);
+        closeEvidenceModal();
+        loadViolationAnalytics(); // Refresh list
+    } catch (error) {
+        alert("Error: " + error.message);
+    }
 }
 
 // --- System Logs ---

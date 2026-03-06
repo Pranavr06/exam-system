@@ -23,6 +23,8 @@ function showSection(sectionName) {
     if (sectionName === 'dashboard') loadDashboardStats();
     if (sectionName === 'upcoming') loadUpcomingExams();
     if (sectionName === 'history') loadExamHistory();
+    if (sectionName === 'academic') loadAcademicInfo();
+    if (sectionName === 'violations') loadViolations();
 }
 
 async function loadDashboardStats() {
@@ -57,6 +59,23 @@ async function loadDashboardStats() {
 
         renderPerformanceChart(stats.performance);
         loadUpcomingExams(true); // Load preview table
+        
+        // Render Recent Results Table
+        const resultsBody = document.querySelector('#dashboard-results-table tbody');
+        if (resultsBody) {
+            if (stats.recent_results.length === 0) {
+                resultsBody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">No recent results.</td></tr>';
+            } else {
+                resultsBody.innerHTML = stats.recent_results.map(r => `
+                    <tr>
+                        <td><strong>${r.exam_name}</strong></td>
+                        <td>${r.subject_name}</td>
+                        <td>${r.obtained_marks} / ${r.max_marks}</td>
+                        <td><span class="status-badge ${r.result_status === 'Pass' ? 'active' : 'inactive'}" style="background:${r.result_status === 'Pass' ? '#d1fae5' : '#fee2e2'}; color:${r.result_status === 'Pass' ? '#065f46' : '#b91c1c'};">${r.result_status}</span></td>
+                    </tr>
+                `).join('');
+            }
+        }
 
     } catch (error) {
         console.error("Failed to load stats", error);
@@ -122,8 +141,11 @@ async function loadUpcomingExams(isPreview = false) {
             // 3. Current time must be < Exam End Time (Start + Duration)
             
             const endTime = new Date(examDate.getTime() + e.duration * 60000);
-            const canStart = e.status === 'active' && now >= examDate && now < endTime;
-            const isMissed = now > endTime;
+            // Allow start if status is active (trust server status) or if attempt is in progress
+            const canStart = e.status === 'active';
+            const isMissed = !canStart && now > endTime;
+
+            const nameLink = canStart ? `<a href="exam-interface.html?exam_id=${e.exam_id}" style="color:#2563EB; font-weight:bold; text-decoration:underline;">${e.exam_name}</a>` : `<strong>${e.exam_name}</strong>`;
 
             let actionBtn = '';
             if (e.attempt_status === 'IN_PROGRESS') {
@@ -131,15 +153,15 @@ async function loadUpcomingExams(isPreview = false) {
             } else if (canStart) {
                 actionBtn = `<button onclick="startExam(${e.exam_id})" class="submit-btn" style="padding: 5px 10px; font-size: 0.8rem;">Start Exam</button>`;
             } else if (isMissed) {
-                actionBtn = `<span style="color:red; font-weight:bold;">Missed</span>`;
+                actionBtn = `<span style="color:#e53e3e; font-weight:500; font-size:0.9rem;">Missed</span>`;
             } else {
-                actionBtn = `<span style="color:gray;">Wait for start</span>`;
+                actionBtn = `<span style="color:#718096; font-size:0.9rem;">Scheduled</span>`;
             }
 
             if (isPreview) {
                 return `
                     <tr>
-                        <td><strong>${e.exam_name}</strong></td>
+                        <td>${nameLink}</td>
                         <td>${e.subject_name}</td>
                         <td>${examDate.toLocaleDateString()} ${examDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
                         <td>${actionBtn}</td>
@@ -148,7 +170,7 @@ async function loadUpcomingExams(isPreview = false) {
             } else {
                 return `
                     <tr>
-                        <td><strong>${e.exam_name}</strong></td>
+                        <td>${nameLink}</td>
                         <td>${e.subject_name}</td>
                         <td>${examDate.toLocaleString()}</td>
                         <td>${e.duration} mins</td>
@@ -194,4 +216,62 @@ async function loadExamHistory() {
 function startExam(examId) {
     // Redirect to exam interface (to be implemented)
     window.location.href = `exam-interface.html?exam_id=${examId}`;
+}
+
+async function loadAcademicInfo() {
+    const profileContainer = document.getElementById('academic-profile-details');
+    const subjectsBody = document.querySelector('#academic-subjects-table tbody');
+    
+    try {
+        const data = await apiRequest('/student/academic-info');
+        const info = data.info;
+        
+        if (info) {
+            profileContainer.innerHTML = `
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid #f1f5f9; padding:8px 0;"><span>Name:</span> <strong>${info.name}</strong></div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid #f1f5f9; padding:8px 0;"><span>USN:</span> <strong>${info.usn}</strong></div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid #f1f5f9; padding:8px 0;"><span>Email:</span> <strong>${info.email}</strong></div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid #f1f5f9; padding:8px 0;"><span>Department:</span> <strong>${info.department_name}</strong></div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid #f1f5f9; padding:8px 0;"><span>Section:</span> <strong>${info.section_name}</strong></div>
+                <div style="display:flex; justify-content:space-between; padding:8px 0;"><span>Batch / Sem:</span> <strong>${info.batch_year} / Sem ${info.semester}</strong></div>
+            `;
+        }
+
+        if (data.subjects.length === 0) {
+            subjectsBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No subjects assigned yet.</td></tr>';
+        } else {
+            subjectsBody.innerHTML = data.subjects.map(s => `
+                <tr>
+                    <td><strong>${s.subject_name}</strong></td>
+                    <td>${s.teacher_name}</td>
+                    <td><a href="mailto:${s.teacher_email}" style="color:#3182ce; text-decoration:none;">${s.teacher_email}</a></td>
+                </tr>
+            `).join('');
+        }
+    } catch (error) {
+        console.error("Failed to load academic info", error);
+        profileContainer.innerHTML = '<p style="color:red">Error loading profile.</p>';
+    }
+}
+
+async function loadViolations() {
+    const tbody = document.querySelector('#violations-table tbody');
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Loading...</td></tr>';
+    try {
+        const violations = await apiRequest('/student/violations');
+        if (violations.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">No violations recorded. Good job!</td></tr>';
+            return;
+        }
+        tbody.innerHTML = violations.map(v => `
+            <tr>
+                <td><span style="color:#e53e3e; font-weight:bold;">${v.violation_type}</span></td>
+                <td>Exam ID: ${v.exam_id}</td> <!-- Ideally fetch exam name -->
+                <td>${new Date(v.timestamp).toLocaleString()}</td>
+                <td>${v.evidence_data ? 'Captured' : 'N/A'}</td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:red; text-align:center;">Error loading violations.</td></tr>';
+    }
 }
