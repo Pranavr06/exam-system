@@ -6,7 +6,7 @@ from security import create_access_token
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-@router.post("/super_admin/login")
+@router.post("/superadmin/login")
 def super_admin_login(email: str, password: str):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)

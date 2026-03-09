@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Body, Request
+from fastapi import APIRouter, Depends, HTTPException, Body, Request, Query
 from db import get_connection
 from security import get_current_user
 from .system_logger import log_action
@@ -172,7 +172,13 @@ def create_exam(
 
 
 @router.get("/admin/exams")
-def get_exams(user=Depends(get_current_user)):
+def get_exams(
+    subject_id: int = Query(None),
+    status: str = Query(None),
+    search: str = Query(None),
+    archived: bool = Query(False),
+    user=Depends(get_current_user)
+):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -180,24 +186,156 @@ def get_exams(user=Depends(get_current_user)):
     cursor = conn.cursor(dictionary=True)
 
     try:
+        # Auto-update status for expired exams
+        cursor.execute("""
+            UPDATE exam 
+            SET status = 'completed' 
+            WHERE status != 'completed' AND NOW() > DATE_ADD(date, INTERVAL duration MINUTE)
+        """)
+        conn.commit()
+
         cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
         admin_row = cursor.fetchone()
         if not admin_row or not admin_row["department_id"]:
             raise HTTPException(status_code=400, detail="Admin not assigned to department")
         
-        cursor.execute("""
+        query = """
             SELECT 
-                e.exam_id, e.exam_name, e.date, e.duration, e.total_marks, e.status, e.exam_scope, e.batch_year, e.semester,
+                e.exam_id, e.exam_name, sub.subject_name, e.date, e.duration, e.total_marks, e.created_by_admin, e.exam_type, e.parent_exam_id,
+                CASE
+                    WHEN e.status = 'completed' THEN 'completed'
+                    WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
+                    WHEN e.status = 'active' AND NOW() >= e.date THEN 'active'
+                    ELSE 'scheduled'
+                END as status, e.exam_scope, e.batch_year, e.semester,
                 GROUP_CONCAT(s.section_name SEPARATOR ', ') as section_details
             FROM exam e
             LEFT JOIN exam_section es ON e.exam_id = es.exam_id
             LEFT JOIN section s ON es.section_id = s.section_id
-            WHERE e.department_id = %s 
-            GROUP BY e.exam_id
-            ORDER BY e.date DESC
-        """, (admin_row["department_id"],))
+            JOIN subject sub ON e.subject_id = sub.subject_id
+            WHERE e.department_id = %s AND e.is_archived = %s
+        """
+        params = [admin_row["department_id"], 1 if archived else 0]
+
+        if subject_id:
+            query += " AND e.subject_id = %s"
+            params.append(subject_id)
+        if search:
+            query += " AND e.exam_name LIKE %s"
+            params.append(f"%{search}%")
         
+        query += " GROUP BY e.exam_id"
+        
+        if status:
+            query += " HAVING status = %s"
+            params.append(status)
+            
+        query += " ORDER BY e.date DESC"
+
+        cursor.execute(query, tuple(params))
         return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.post("/admin/exams/{exam_id}/re-exam/class")
+def create_reexam_class(
+    exam_id: int,
+    request: Request,
+    exam_date: str = Body(...),
+    duration: int = Body(...),
+    user=Depends(get_current_user)
+):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # Fetch original exam
+        cursor.execute("SELECT * FROM exam WHERE exam_id = %s", (exam_id,))
+        original = cursor.fetchone()
+        if not original:
+            raise HTTPException(status_code=404, detail="Original exam not found")
+
+        formatted_date = exam_date.replace("T", " ")
+        new_name = f"Retake: {original['exam_name']}"
+
+        # Create new exam instance
+        cursor.execute("""
+            INSERT INTO exam (
+                exam_name, subject_id, date, duration, total_marks, status, 
+                created_by_admin, department_id, exam_scope, batch_year, semester, 
+                exam_type, parent_exam_id
+            ) VALUES (%s, %s, %s, %s, %s, 'scheduled', %s, %s, %s, %s, %s, 'retake', %s)
+        """, (
+            new_name, original['subject_id'], formatted_date, duration, original['total_marks'],
+            user["user_id"], original['department_id'], original['exam_scope'], 
+            original['batch_year'], original['semester'], exam_id
+        ))
+        new_exam_id = cursor.lastrowid
+
+        # Copy Sections
+        cursor.execute("SELECT section_id FROM exam_section WHERE exam_id = %s", (exam_id,))
+        sections = cursor.fetchall()
+        if sections:
+            values = [(new_exam_id, s['section_id']) for s in sections]
+            cursor.executemany("INSERT INTO exam_section (exam_id, section_id) VALUES (%s, %s)", values)
+
+        # Copy Questions
+        cursor.execute("SELECT * FROM question WHERE exam_id = %s", (exam_id,))
+        questions = cursor.fetchall()
+        for q in questions:
+            cursor.execute("INSERT INTO question (exam_id, question_text, marks, question_type) VALUES (%s, %s, %s, %s)", 
+                           (new_exam_id, q['question_text'], q['marks'], q['question_type']))
+            new_q_id = cursor.lastrowid
+            
+            cursor.execute("SELECT * FROM question_option WHERE question_id = %s", (q['question_id'],))
+            options = cursor.fetchall()
+            if options:
+                opt_values = [(new_q_id, o['option_text'], o['is_correct']) for o in options]
+                cursor.executemany("INSERT INTO question_option (question_id, option_text, is_correct) VALUES (%s, %s, %s)", opt_values)
+
+        log_action(user["user_id"], "admin", original['department_id'], f"Created Class Re-Exam: {new_name}", "exam", new_exam_id, ip_address=request.client.host)
+        conn.commit()
+        return {"message": "Class Re-Exam created successfully"}
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.post("/admin/exams/{exam_id}/re-exam/students")
+def create_reexam_students(
+    exam_id: int,
+    request: Request,
+    student_ids: list[int] = Body(...),
+    exam_date: str = Body(...),
+    duration: int = Body(...),
+    user=Depends(get_current_user)
+):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        formatted_date = exam_date.replace("T", " ")
+        
+        # Verify exam exists
+        cursor.execute("SELECT department_id FROM exam WHERE exam_id = %s", (exam_id,))
+        exam = cursor.fetchone()
+        if not exam:
+             raise HTTPException(status_code=404, detail="Exam not found")
+
+        # Insert into exam_retake
+        values = [(exam_id, sid, formatted_date, duration, user["user_id"], 'scheduled') for sid in student_ids]
+        cursor.executemany("""
+            INSERT INTO exam_retake (exam_id, student_id, retake_date, retake_duration, created_by, status)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, values)
+
+        log_action(user["user_id"], "admin", exam[0], f"Scheduled Student Re-Exam for {len(student_ids)} students", "exam", exam_id, ip_address=request.client.host)
+        conn.commit()
+        return {"message": "Student Re-Exams scheduled successfully"}
     finally:
         cursor.close()
         conn.close()
@@ -219,10 +357,29 @@ def add_question(
     if marks < 0.25:
         raise HTTPException(status_code=400, detail="Marks cannot be less than 0.25")
 
+    # Validate Options
+    if len(options) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 options are required")
+    
+    if sum(1 for opt in options if opt["is_correct"]) != 1:
+        raise HTTPException(status_code=400, detail="Exactly one correct option must be selected")
+    
+    if any(not opt["text"].strip() for opt in options):
+        raise HTTPException(status_code=400, detail="Option text cannot be empty")
+
+    option_texts = [opt["text"].strip() for opt in options]
+    if len(option_texts) != len(set(option_texts)):
+        raise HTTPException(status_code=400, detail="Duplicate options provided. Each option must be unique.")
+
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
+        # Check if question already exists
+        cursor.execute("SELECT question_id FROM question WHERE exam_id = %s AND question_text = %s", (exam_id, question_text))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="This question already exists in the exam.")
+
         # Insert Question
         cursor.execute(
             "INSERT INTO question (exam_id, question_text, marks) VALUES (%s, %s, %s)",
@@ -239,6 +396,10 @@ def add_question(
         
         conn.commit()
         return {"message": "Question added successfully"}
+    except mysql.connector.IntegrityError as e:
+        if "unique_option_per_question" in str(e):
+             raise HTTPException(status_code=400, detail="Duplicate options detected for this question.")
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         cursor.close()
         conn.close()
@@ -253,6 +414,18 @@ def get_exam_questions_admin(
 ):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    # Validate Options
+    if len(options) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 options are required")
+    if sum(1 for opt in options if opt["is_correct"]) != 1:
+        raise HTTPException(status_code=400, detail="Exactly one correct option must be selected")
+    if any(not opt["text"].strip() for opt in options):
+        raise HTTPException(status_code=400, detail="Option text cannot be empty")
+
+    option_texts = [opt["text"].strip() for opt in options]
+    if len(option_texts) != len(set(option_texts)):
+        raise HTTPException(status_code=400, detail="Duplicate options provided. Each option must be unique.")
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -389,6 +562,11 @@ def update_question(
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Question not found")
 
+        # Check if question text already exists (excluding current question)
+        cursor.execute("SELECT question_id FROM question WHERE exam_id = (SELECT exam_id FROM question WHERE question_id = %s) AND question_text = %s AND question_id != %s", (question_id, question_text, question_id))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="This question text already exists in the exam.")
+
         # Update Question
         cursor.execute(
             "UPDATE question SET question_text = %s, marks = %s WHERE question_id = %s",
@@ -406,6 +584,10 @@ def update_question(
         
         conn.commit()
         return {"message": "Question updated successfully"}
+    except mysql.connector.IntegrityError as e:
+        if "unique_option_per_question" in str(e):
+             raise HTTPException(status_code=400, detail="Duplicate options detected for this question.")
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         cursor.close()
         conn.close()
@@ -444,12 +626,34 @@ def delete_exam(exam_id: int, user=Depends(get_current_user)):
         cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
         admin_dept = cursor.fetchone()["department_id"]
 
-        cursor.execute("DELETE FROM exam WHERE exam_id = %s AND department_id = %s", (exam_id, admin_dept))
+        cursor.execute("UPDATE exam SET is_archived = 1 WHERE exam_id = %s AND department_id = %s", (exam_id, admin_dept))
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Exam not found or access denied")
         
         conn.commit()
-        return {"message": "Exam deleted successfully"}
+        return {"message": "Exam archived successfully"}
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.put("/admin/exams/{exam_id}/restore")
+def restore_exam_admin(exam_id: int, user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_dept = cursor.fetchone()["department_id"]
+
+        cursor.execute("UPDATE exam SET is_archived = 0 WHERE exam_id = %s AND department_id = %s", (exam_id, admin_dept))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Exam not found or access denied")
+        
+        conn.commit()
+        return {"message": "Exam restored successfully"}
     finally:
         cursor.close()
         conn.close()
@@ -483,6 +687,7 @@ def update_exam(
     section_id: int = Body(None),
     batch_year: int = Body(None),
     semester: int = Body(None),
+    assigned_teacher_id: int = Body(None),
     user=Depends(get_current_user)
 ):
     if user["role"] != "admin":
@@ -501,10 +706,24 @@ def update_exam(
         
         formatted_date = exam_date.replace("T", " ")
         
-        cursor.execute("""
+        # Base update query
+        update_sql = """
             UPDATE exam SET exam_name=%s, subject_id=%s, duration=%s, total_marks=%s, date=%s, exam_scope=%s, batch_year=%s, semester=%s 
-            WHERE exam_id=%s AND department_id=%s
-        """, (exam_name, subject_id, duration, total_marks, formatted_date, exam_scope, batch_year, semester, exam_id, admin_dept))
+        """
+        params = [exam_name, subject_id, duration, total_marks, formatted_date, exam_scope, batch_year, semester]
+
+        # Handle Reassignment to a Teacher
+        if assigned_teacher_id is not None:
+            cursor.execute("SELECT teacher_id FROM teacher WHERE teacher_id = %s AND department_id = %s", (assigned_teacher_id, admin_dept))
+            if not cursor.fetchone():
+                 raise HTTPException(status_code=400, detail="Assigned teacher not found in department")
+            update_sql += ", created_by_teacher=%s, created_by_admin=NULL"
+            params.append(assigned_teacher_id)
+
+        update_sql += " WHERE exam_id=%s AND department_id=%s"
+        params.extend([exam_id, admin_dept])
+
+        cursor.execute(update_sql, tuple(params))
         conn.commit()
         return {"message": "Exam updated successfully"}
     finally:
@@ -532,7 +751,7 @@ def publish_exam(exam_id: int, request: Request, user=Depends(get_current_user))
         total_q_marks = result["total_q_marks"] or 0
 
         # 3. Validate
-        if float(total_q_marks) != float(exam["total_marks"]):
+        if abs(float(total_q_marks) - float(exam["total_marks"])) > 0.01:
             raise HTTPException(
                 status_code=400, 
                 detail=f"Marks mismatch! Exam Total: {exam['total_marks']}, Questions Total: {total_q_marks}. Please adjust questions."

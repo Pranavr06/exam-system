@@ -29,6 +29,13 @@ async function initializeExam() {
 
         // 2. Fetch Questions
         const data = await apiRequest(`/student/exams/questions?exam_id=${examId}`);
+        
+        if (data.message && data.auto_submitted) {
+             alert("Exam time has expired. It has been auto-submitted.");
+             window.location.href = 'student-dashboard.html';
+             return;
+        }
+
         questions = data.questions;
         
         if (!questions || questions.length === 0) {
@@ -37,15 +44,10 @@ async function initializeExam() {
             return;
         }
 
-        // 3. Fetch Exam Details for Timer
-        const exams = await apiRequest('/student/exams');
-        const examDetails = exams.exams.find(e => e.exam_id == examId);
-        
-        if (examDetails) {
-            document.getElementById('exam-title').textContent = examDetails.exam_name;
-            remainingTime = examDetails.duration * 60; 
-            startTimer();
-        }
+        // 3. Set Timer & Title from Server Data
+        document.getElementById('exam-title').textContent = data.exam_name;
+        remainingTime = Math.floor(data.remaining_seconds);
+        startTimer();
 
         renderPalette();
         loadQuestion(0);
@@ -153,7 +155,6 @@ function startTimer() {
         if (remainingTime <= 0) {
             clearInterval(timerInterval);
             isSubmitting = true; // Prevent violation trigger on alert
-            alert("Time is up! Submitting exam.");
             submitExam(true); // Force submit
             return;
         }
@@ -178,10 +179,15 @@ async function submitExam(force = false) {
     
     try {
         await apiRequest('/student/exams/finish', 'POST', { exam_id: parseInt(examId) });
-        alert("Exam submitted successfully!");
+        if (force) {
+            alert("Time is up! Your exam has been submitted.");
+        } else {
+            alert("Exam submitted successfully!");
+        }
         window.location.href = 'student-dashboard.html';
     } catch (error) {
         alert("Error submitting exam: " + error.message);
+        window.location.href = 'student-dashboard.html';
     }
 }
 

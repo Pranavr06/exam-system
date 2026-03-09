@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File, Query, Request
 from db import get_connection
 from security import get_current_user
+from .system_logger import log_action
 from passlib.context import CryptContext
 import mysql.connector
+import csv
+import io
 
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -25,6 +28,78 @@ def get_admin_profile(user=Depends(get_current_user)):
         if not profile:
             raise HTTPException(status_code=404, detail="Profile not found")
         return profile
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/admin/violations/history")
+def get_admin_violation_history(
+    page: int = 1,
+    limit: int = 20,
+    status: str = Query(None),
+    exam_id: int = Query(None),
+    search: str = Query(None),
+    start_date: str = Query(None),
+    end_date: str = Query(None),
+    violation_type: str = Query(None),
+    user=Depends(get_current_user)
+):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        dept_id = cursor.fetchone()["department_id"]
+
+        base_query = """
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE e.department_id = %s
+        """
+        params = [dept_id]
+
+        if status:
+            base_query += " AND v.review_status = %s"
+            params.append(status)
+        if exam_id:
+            base_query += " AND v.exam_id = %s"
+            params.append(exam_id)
+        if start_date:
+            base_query += " AND DATE(v.detected_at) >= %s"
+            params.append(start_date)
+        if end_date:
+            base_query += " AND DATE(v.detected_at) <= %s"
+            params.append(end_date)
+        if violation_type:
+            base_query += " AND v.violation_type = %s"
+            params.append(violation_type)
+        if search:
+            base_query += " AND (s.name LIKE %s OR s.usn LIKE %s OR v.violation_type LIKE %s)"
+            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+
+        cursor.execute(f"SELECT COUNT(*) as total {base_query}", tuple(params))
+        total = cursor.fetchone()["total"]
+
+        query = f"""
+            SELECT v.violation_id, s.name as student_name, s.usn, e.exam_name, 
+                   v.violation_type, v.detected_at as timestamp, v.review_status, v.remarks
+            {base_query}
+            ORDER BY v.detected_at DESC
+            LIMIT %s OFFSET %s
+        """
+        params.extend([limit, (page - 1) * limit])
+        cursor.execute(query, tuple(params))
+        history = cursor.fetchall()
+
+        return {
+            "history": history,
+            "total": total,
+            "page": page,
+            "total_pages": (total + limit - 1) // limit
+        }
     finally:
         cursor.close()
         conn.close()
@@ -183,8 +258,82 @@ def get_students(
         cursor.close()
         conn.close()
 
+@router.post("/admin/students/import")
+async def import_students_csv(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user)
+):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Invalid file format. Please upload a CSV file.")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        # Get Admin Department
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        admin_row = cursor.fetchone()
+        if not admin_row or not admin_row["department_id"]:
+            raise HTTPException(status_code=400, detail="Admin not assigned to department")
+        department_id = admin_row["department_id"]
+        admin_id = user["user_id"]
+
+        # Read CSV
+        content = await file.read()
+        decoded_content = content.decode('utf-8')
+        csv_reader = csv.DictReader(io.StringIO(decoded_content))
+
+        # Normalize headers (lowercase, strip)
+        if csv_reader.fieldnames:
+            csv_reader.fieldnames = [name.lower().strip() for name in csv_reader.fieldnames]
+        
+        required_fields = {'name', 'email', 'usn', 'semester', 'section_id'}
+        if not required_fields.issubset(set(csv_reader.fieldnames or [])):
+             raise HTTPException(status_code=400, detail=f"CSV missing required columns: {required_fields - set(csv_reader.fieldnames or [])}")
+
+        stats = {"added": 0, "skipped": 0, "errors": []}
+
+        for row_num, row in enumerate(csv_reader, start=1):
+            try:
+                name = row.get('name')
+                email = row.get('email')
+                usn = row.get('usn')
+                semester = row.get('semester')
+                section_id = row.get('section_id')
+                section_label = row.get('section_label', '') # Optional
+                password = row.get('password', usn) # Default password to USN if missing
+
+                if not all([name, email, usn, semester, section_id]):
+                    stats["errors"].append(f"Row {row_num}: Missing required fields")
+                    continue
+
+                hashed_password = pwd_context.hash(password)
+
+                cursor.execute(
+                    """INSERT INTO student (
+                        name, email, password_hash, usn, semester, 
+                        section_label, section_id, department_id, created_by_admin
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (name, email, hashed_password, usn, semester, section_label, section_id, department_id, admin_id)
+                )
+                stats["added"] += 1
+            
+            except mysql.connector.IntegrityError:
+                stats["skipped"] += 1
+            except Exception as e:
+                stats["errors"].append(f"Row {row_num}: {str(e)}")
+
+        conn.commit()
+        return {"message": "Import completed", "stats": stats}
+    finally:
+        cursor.close()
+        conn.close()
+
 @router.delete("/admin/teachers/{teacher_id}")
-def delete_teacher(teacher_id: int, user=Depends(get_current_user)):
+def delete_teacher(teacher_id: int, request: Request, transfer_to: int = Query(None), user=Depends(get_current_user)):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -196,12 +345,48 @@ def delete_teacher(teacher_id: int, user=Depends(get_current_user)):
         cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
         admin_dept = cursor.fetchone()["department_id"]
         
-        cursor.execute("DELETE FROM teacher WHERE teacher_id = %s AND department_id = %s", (teacher_id, admin_dept))
-        if cursor.rowcount == 0:
+        # Check if teacher exists in this department
+        cursor.execute("SELECT teacher_id, name FROM teacher WHERE teacher_id = %s AND department_id = %s", (teacher_id, admin_dept))
+        teacher = cursor.fetchone()
+        if not teacher:
             raise HTTPException(status_code=404, detail="Teacher not found or access denied")
+
+        if transfer_to:
+            # Verify target teacher
+            cursor.execute("SELECT teacher_id FROM teacher WHERE teacher_id = %s AND department_id = %s", (transfer_to, admin_dept))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=400, detail="Target teacher for transfer not found in your department")
+            
+            # Transfer Data
+            cursor.execute("UPDATE exam SET created_by_teacher = %s WHERE created_by_teacher = %s", (transfer_to, teacher_id))
+            cursor.execute("UPDATE exam_section SET assigned_by_teacher = %s WHERE assigned_by_teacher = %s", (transfer_to, teacher_id))
+            cursor.execute("UPDATE teaching_assignment SET teacher_id = %s WHERE teacher_id = %s", (transfer_to, teacher_id))
+            
+            action_msg = f"Deleted Teacher: {teacher['name']} (Data transferred to ID {transfer_to})"
+        else:
+            # Default: Reassign exams to Admin (Course Coordinator concept)
+            cursor.execute("""
+                UPDATE exam 
+                SET created_by_teacher = NULL, created_by_admin = %s 
+                WHERE created_by_teacher = %s AND department_id = %s
+            """, (user["user_id"], teacher_id, admin_dept))
+            
+            action_msg = f"Deleted Teacher: {teacher['name']} (Exams reassigned to Admin)"
+
+        cursor.execute("DELETE FROM teacher WHERE teacher_id = %s AND department_id = %s", (teacher_id, admin_dept))
+        
+        log_action(
+            user_id=user["user_id"],
+            role="admin",
+            department_id=admin_dept,
+            action=action_msg,
+            entity_type="teacher",
+            entity_id=teacher_id,
+            ip_address=request.client.host
+        )
         
         conn.commit()
-        return {"message": "Teacher deleted successfully"}
+        return {"message": "Teacher deleted successfully."}
     finally:
         cursor.close()
         conn.close()
@@ -523,6 +708,164 @@ def delete_assignment(assignment_id: int, user=Depends(get_current_user)):
             raise HTTPException(status_code=404, detail="Assignment not found")
         conn.commit()
         return {"message": "Assignment removed"}
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/admin/violations/stats")
+def get_admin_violation_stats(status: str = Query(None), exam_id: int = Query(None), user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        dept_id = cursor.fetchone()["department_id"]
+
+        # Base filter: Violations for students in this department
+        base_where = "s.department_id = %s"
+        params = [dept_id]
+        
+        if status:
+            base_where += " AND v.review_status = %s"
+            params.append(status)
+        if exam_id:
+            base_where += " AND v.exam_id = %s"
+            params.append(exam_id)
+
+        stats = {}
+        
+        # 1. Summary Cards
+        cursor.execute(f"SELECT COUNT(v.violation_id) as c FROM violation v JOIN student s ON v.student_id = s.student_id WHERE {base_where} AND DATE(v.detected_at) = CURDATE()", tuple(params))
+        stats["today"] = cursor.fetchone()["c"]
+        
+        cursor.execute(f"SELECT COUNT(v.violation_id) as c FROM violation v JOIN student s ON v.student_id = s.student_id WHERE {base_where} AND YEARWEEK(v.detected_at, 1) = YEARWEEK(CURDATE(), 1)", tuple(params))
+        stats["week"] = cursor.fetchone()["c"]
+        
+        cursor.execute(f"SELECT COUNT(DISTINCT v.student_id) as c FROM violation v JOIN student s ON v.student_id = s.student_id WHERE {base_where}", tuple(params))
+        stats["students_flagged"] = cursor.fetchone()["c"]
+        
+        cursor.execute(f"SELECT COUNT(DISTINCT v.exam_id) as c FROM violation v JOIN student s ON v.student_id = s.student_id WHERE {base_where}", tuple(params))
+        stats["exams_affected"] = cursor.fetchone()["c"]
+
+        # 2. Trend (Last 7 Days)
+        cursor.execute(f"""
+            SELECT DATE_FORMAT(v.detected_at, '%Y-%m-%d') as date, COUNT(*) as count 
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            WHERE {base_where} AND v.detected_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) 
+            GROUP BY DATE_FORMAT(v.detected_at, '%Y-%m-%d')
+            ORDER BY date ASC
+        """, tuple(params))
+        stats["trend"] = cursor.fetchall()
+
+        # 3. By Type
+        cursor.execute(f"SELECT v.violation_type, COUNT(*) as count FROM violation v JOIN student s ON v.student_id = s.student_id WHERE {base_where} GROUP BY v.violation_type", tuple(params))
+        stats["by_type"] = cursor.fetchall()
+
+        # 4. By Exam
+        cursor.execute(f"""
+            SELECT e.exam_name, COUNT(v.violation_id) as count
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE {base_where}
+            GROUP BY v.exam_id
+            ORDER BY count DESC
+            LIMIT 5
+        """, tuple(params))
+        stats["by_exam"] = cursor.fetchall()
+
+        # 5. Recent Violations
+        cursor.execute(f"""
+            SELECT v.violation_id, s.name, s.usn, e.exam_name, v.violation_type, v.detected_at as timestamp, v.review_status
+            FROM violation v 
+            JOIN student s ON v.student_id = s.student_id 
+            JOIN exam e ON v.exam_id = e.exam_id 
+            WHERE {base_where}
+            ORDER BY v.detected_at DESC LIMIT 10
+        """, tuple(params))
+        stats["recent"] = cursor.fetchall()
+
+        # 6. High Risk Students
+        cursor.execute(f"""
+            SELECT s.name, s.usn, COUNT(v.violation_id) as violation_count 
+            FROM violation v 
+            JOIN student s ON v.student_id = s.student_id 
+            WHERE {base_where}
+            GROUP BY s.student_id 
+            HAVING violation_count > 1 
+            ORDER BY violation_count DESC LIMIT 5
+        """, tuple(params))
+        stats["high_risk"] = cursor.fetchall()
+
+        # 7. Alerts
+        alerts = []
+        if stats["today"] > 10:
+            alerts.append({"type": "critical", "message": f"High violation rate today ({stats['today']})."})
+        stats["alerts"] = alerts
+
+        return stats
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/admin/violations/{violation_id}")
+def get_violation_details_admin(violation_id: int, user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        dept_id = cursor.fetchone()["department_id"]
+
+        cursor.execute("""
+            SELECT v.*, v.detected_at as timestamp, s.name as student_name, s.usn, e.exam_name, q.question_text
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            JOIN exam e ON v.exam_id = e.exam_id
+            LEFT JOIN question q ON v.question_id = q.question_id
+            WHERE v.violation_id = %s AND s.department_id = %s
+        """, (violation_id, dept_id))
+        
+        violation = cursor.fetchone()
+        if not violation:
+            raise HTTPException(status_code=404, detail="Violation not found or access denied")
+            
+        cursor.execute("SELECT * FROM evidence WHERE violation_id = %s", (violation_id,))
+        violation["evidence"] = cursor.fetchall()
+
+        return violation
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.put("/admin/violations/{violation_id}/resolve")
+def resolve_violation_admin(violation_id: int, status: str = Body(...), remarks: str = Body(None), user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Re-using teacher logic logic or implementing similar update
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
+        dept_id = cursor.fetchone()[0]
+
+        cursor.execute("""
+            UPDATE violation v JOIN exam e ON v.exam_id = e.exam_id
+            SET v.review_status = %s, v.remarks = %s, v.reviewed_by_admin = %s, v.reviewed_at = NOW()
+            WHERE v.violation_id = %s AND e.department_id = %s
+        """, (status, remarks, user["user_id"], violation_id, dept_id))
+        
+        if cursor.rowcount == 0:
+             raise HTTPException(status_code=404, detail="Violation not found or access denied")
+
+        conn.commit()
+        return {"message": f"Violation marked as {status}"}
     finally:
         cursor.close()
         conn.close()

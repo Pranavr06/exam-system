@@ -116,14 +116,21 @@ def get_exam_questions(exam_id: int, user=Depends(get_current_user)):
             }
 
         cursor.execute("""
-            SELECT status FROM attempt
-            WHERE student_id = %s AND exam_id = %s
+            SELECT a.status, a.start_time, e.duration, e.exam_name
+            FROM attempt a
+            JOIN exam e ON a.exam_id = e.exam_id
+            WHERE a.student_id = %s AND a.exam_id = %s
         """, (user["user_id"], exam_id))
 
         attempt = cursor.fetchone()
 
         if not attempt or attempt["status"] != "IN_PROGRESS":
             raise HTTPException(status_code=403, detail="Exam not active")
+
+        # Calculate remaining time
+        end_time = attempt["start_time"] + timedelta(minutes=attempt["duration"])
+        remaining_seconds = (end_time - datetime.now()).total_seconds()
+        if remaining_seconds < 0: remaining_seconds = 0
 
         cursor.execute("""
             SELECT q.question_id, q.question_text, q.marks,
@@ -151,7 +158,11 @@ def get_exam_questions(exam_id: int, user=Depends(get_current_user)):
                 "option_text": row["option_text"]
             })
 
-        return {"questions": list(questions.values())}
+        return {
+            "questions": list(questions.values()),
+            "remaining_seconds": remaining_seconds,
+            "exam_name": attempt["exam_name"]
+        }
 
     finally:
         cursor.close()

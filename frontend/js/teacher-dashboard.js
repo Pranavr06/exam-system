@@ -1,4 +1,10 @@
 let subjectSectionsMap = {};
+let subjectsDataPromise = null;
+let currentResultsData = [];
+let currentLogsData = [];
+let navHistory = [];
+let showingArchived = false;
+let isNavigatingBack = false;
 
 document.addEventListener("DOMContentLoaded", () => {
     requireAuth("teacher");
@@ -6,7 +12,8 @@ document.addEventListener("DOMContentLoaded", () => {
     showSection('dashboard');
     
     // Load initial data for dropdowns
-    loadSubjectsAndSectionsData();
+    subjectsDataPromise = loadSubjectsAndSectionsData();
+    loadDepartmentSectionsForFilter();
 });
 
 async function loadUserProfile() {
@@ -20,6 +27,16 @@ async function loadUserProfile() {
 }
 
 function showSection(sectionName) {
+    // Capture active section for history
+    const activeSection = document.querySelector('.form-container.active');
+    if (activeSection && !isNavigatingBack) {
+        const activeId = activeSection.id.replace('-section', '');
+        if (activeId !== sectionName) {
+            navHistory.push(activeId);
+        }
+    }
+    isNavigatingBack = false;
+
     // Hide all forms
     document.querySelectorAll('.form-container').forEach(div => {
         div.classList.remove('active');
@@ -37,18 +54,64 @@ function showSection(sectionName) {
     const btn = document.querySelector(`.sidebar button[data-section="${sectionName}"]`);
     if (btn) btn.classList.add('active');
 
+    updateBreadcrumb(sectionName);
+
     // Load data for the section
-    if (sectionName === 'dashboard') loadDashboardStats();
-    if (sectionName === 'subjects') loadAssignedSubjects();
-    if (sectionName === 'sections') loadAssignedSections();
-    if (sectionName === 'create-exam') loadExistingExams();
-    if (sectionName === 'questions') loadExamsForQuestions();
-    if (sectionName === 'my-exams') loadMyExams();
-    if (sectionName === 'results') loadTeacherResults();
-    if (sectionName === 'activity-logs') loadTeacherActivityLogs();
+    if (sectionName === 'dashboard') return loadDashboardStats();
+    if (sectionName === 'subjects') return loadAssignedSubjects();
+    if (sectionName === 'sections') return loadAssignedSections();
+    if (sectionName === 'create-exam') return loadExistingExams();
+    if (sectionName === 'questions') return loadExamsForQuestions();
+    if (sectionName === 'my-exams') return loadMyExams();
+    if (sectionName === 'results') return loadTeacherResults();
+    if (sectionName === 'activity-logs') return loadTeacherActivityLogs();
     if (sectionName === 'violations') {
-        loadTeacherViolationAnalytics();
+        return loadTeacherViolationAnalytics();
+        return loadExamsForViolationFilter();
     }
+    if (sectionName === 'monitor') return; // Data loaded by function call
+    if (sectionName === 'analytics') return; // Data loaded by function call
+}
+
+function goBack() {
+    if (navHistory.length === 0) return;
+    const prevSection = navHistory.pop();
+    isNavigatingBack = true;
+    showSection(prevSection);
+}
+
+function updateBreadcrumb(section) {
+    const breadcrumb = document.getElementById('breadcrumb');
+    if (!breadcrumb) return;
+
+    const sectionNames = {
+        'dashboard': 'Dashboard',
+        'subjects': 'My Subjects',
+        'sections': 'My Sections',
+        'create-exam': 'Create Exam',
+        'questions': 'Add Questions',
+        'my-exams': 'My Exams',
+        'results': 'View Results',
+        'violations': 'Violations',
+        'activity-logs': 'Activity Logs',
+        'monitor': 'Live Monitor',
+        'analytics': 'Analytics'
+    };
+
+    const name = sectionNames[section] || section.charAt(0).toUpperCase() + section.slice(1);
+    
+    const backButtonHtml = navHistory.length > 0 
+        ? `<button class="back-btn" onclick="goBack()" title="Go Back"><i class="fas fa-arrow-left"></i></button>` 
+        : '';
+
+    breadcrumb.innerHTML = `
+        <div class="breadcrumb-container">
+            ${backButtonHtml}
+            <a onclick="showSection('dashboard')">Home</a>
+            <span class="separator">/</span>
+            <span class="current">${name}</span>
+        </div>
+    `;
 }
 
 function resetFilterAndShowExams() {
@@ -57,25 +120,55 @@ function resetFilterAndShowExams() {
     showSection('my-exams');
 }
 
+function toggleArchivedExams() {
+    showingArchived = !showingArchived;
+    const btn = document.getElementById('toggle-archived-btn');
+    if (btn) btn.textContent = showingArchived ? "View Active" : "View Archived";
+    loadMyExams();
+}
+
 // --- Dashboard Stats ---
 async function loadDashboardStats() {
     const container = document.getElementById('stats-container');
+    const alertsContainer = document.getElementById('teacher-alerts-container');
     container.innerHTML = '<div class="spinner"></div>';
     
     try {
         const stats = await apiRequest('/teacher/dashboard/stats');
         
+        // Render Alerts
+        if (alertsContainer) {
+            if (stats.alerts && stats.alerts.length > 0) {
+                alertsContainer.innerHTML = stats.alerts.map(a => `
+                    <div class="alert-box ${a.type}" style="background-color: #fff3cd; color: #856404; padding: 12px; margin-bottom: 10px; border: 1px solid #ffeeba; border-radius: 6px; display: flex; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; align-items: center;">
+                            <i class="fas fa-exclamation-triangle" style="margin-right: 10px;"></i>
+                            <span>${a.message}</span>
+                        </div>
+                        ${a.action === 'add_questions' ? `<button onclick="goToAddQuestions(${a.exam_id})" class="btn-edit" style="background-color: #ffc107; color: #000; border: 1px solid #e0a800; font-size: 0.8rem; padding: 4px 8px;">Fix Now</button>` : ''}
+                    </div>
+                `).join('');
+            } else {
+                alertsContainer.innerHTML = '';
+            }
+        }
+        
         // Cards
         container.innerHTML = `
             <div class="stat-card" onclick="showSection('subjects')">
                 <div class="stat-value">${stats.subjects_count}</div>
-                <div class="stat-label">Subjects</div>
+                <div class="stat-label">My Subjects</div>
                 <div class="stat-icon">📚</div>
             </div>
             <div class="stat-card" onclick="showSection('sections')">
                 <div class="stat-value">${stats.sections_count}</div>
-                <div class="stat-label">Sections</div>
+                <div class="stat-label">My Sections</div>
                 <div class="stat-icon">👥</div>
+            </div>
+            <div class="stat-card" onclick="showSection('my-exams')">
+                <div class="stat-value">${stats.total_exams_created}</div>
+                <div class="stat-label">Total Exams Created</div>
+                <div class="stat-icon">📝</div>
             </div>
             <div class="stat-card" onclick="showSection('my-exams')">
                 <div class="stat-value">${stats.active_exams}</div>
@@ -84,7 +177,7 @@ async function loadDashboardStats() {
             </div>
             <div class="stat-card" onclick="showSection('my-exams')">
                 <div class="stat-value">${stats.upcoming_exams}</div>
-                <div class="stat-label">Upcoming</div>
+                <div class="stat-label">Upcoming Exams</div>
                 <div class="stat-icon">📅</div>
             </div>
         `;
@@ -95,7 +188,7 @@ async function loadDashboardStats() {
             if (stats.recent_exams.length === 0) {
                 recentTable.innerHTML = '<tr><td colspan="5" style="text-align:center">No recent activity</td></tr>';
             } else {
-                recentTable.innerHTML = stats.recent_exams.map(e => `
+                recentTable.innerHTML = stats.recent_exams.slice(0, 5).map(e => `
                     <tr>
                         <td><strong>${e.exam_name}</strong></td>
                         <td>${e.subject_name}</td>
@@ -113,7 +206,7 @@ async function loadDashboardStats() {
             if (stats.upcoming_week_exams.length === 0) {
                 upcomingList.innerHTML = '<li style="color:#666; text-align:center;">No exams this week</li>';
             } else {
-                upcomingList.innerHTML = stats.upcoming_week_exams.map(e => `
+                upcomingList.innerHTML = stats.upcoming_week_exams.slice(0, 5).map(e => `
                     <li style="padding: 10px 0; border-bottom: 1px solid #f0f0f0;">
                         <strong>${e.exam_name}</strong><br>
                         <span style="font-size: 0.85rem; color: #666;">${new Date(e.date).toLocaleString()}</span>
@@ -225,6 +318,21 @@ function populateSubjectDropdowns() {
     }
 }
 
+async function loadDepartmentSectionsForFilter() {
+    const select = document.getElementById('result-filter-section');
+    if (!select) return;
+    
+    try {
+        const sections = await apiRequest('/teacher/department/sections');
+        select.innerHTML = '<option value="">All Sections</option>';
+        sections.forEach(s => {
+            select.appendChild(new Option(`${s.section_name} (Sem ${s.semester})`, s.section_id));
+        });
+    } catch (error) {
+        console.error("Failed to load department sections", error);
+    }
+}
+
 // --- Create Exam ---
 async function handleCreateExam(event) {
     event.preventDefault();
@@ -268,33 +376,50 @@ function resetExamForm() {
 async function loadExistingExams() {
     const tbody = document.getElementById('existing-exams-tbody');
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Loading...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Loading...</td></tr>';
 
     try {
         const exams = await apiRequest('/teacher/exams');
-        if (exams.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No exams created yet.</td></tr>';
+        const filteredExams = exams.filter(e => e.status !== 'completed');
+        if (filteredExams.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No exams found.</td></tr>';
             return;
         }
 
-        tbody.innerHTML = exams.map(e => `
+        tbody.innerHTML = filteredExams.map(e => `
             <tr>
                 <td><strong>${e.exam_name}</strong></td>
                 <td>${e.total_marks}</td>
                 <td>${e.sections}</td>
                 <td>${new Date(e.date).toLocaleString()}</td>
-                <td>
-                    ${e.status !== 'active' ? `<button onclick="editExam(${e.exam_id})" class="btn-edit">Edit</button>` : '<span style="color:#999; font-size:0.8rem;">Active/Done</span>'}
+                <td><span class="status-badge ${e.status}">${e.status}</span></td>
+                <td class="question-actions">
+                    ${e.status === 'scheduled' ? `
+                        <button onclick="editExam(${e.exam_id})" class="btn-edit" title="Edit Exam">Edit</button>
+                        <button onclick="publishExam(${e.exam_id})" class="btn-edit" style="background-color:#17a2b8; color:white;" title="Publish Exam">Publish</button>
+                        <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                        <button onclick="deleteExam(${e.exam_id})" class="btn-delete" title="Delete Exam">Delete</button>
+                    ` : e.status === 'active' ? `
+                        <button onclick="monitorExam(${e.exam_id})" class="btn-edit" style="background-color:#2b6cb0; color:white;">Monitor</button>
+                        <button onclick="editExam(${e.exam_id})" class="btn-edit" title="Edit Exam">Edit</button>
+                        <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                        <button onclick="deleteExam(${e.exam_id})" class="btn-delete" title="Delete Exam">Delete</button>
+                    ` : `
+                        <button onclick="goToExamResults('${e.exam_name.replace(/'/g, "\\'")}')" class="btn-edit" style="background-color:#6f42c1; color:white;">Results</button>
+                        <button onclick="deleteExam(${e.exam_id})" class="btn-delete" title="Delete Exam">Delete</button>
+                    `}
                 </td>
             </tr>
         `).join('');
     } catch (error) {
-        tbody.innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
     }
 }
 
 async function editExam(examId) {
     try {
+        // Ensure subject/section map is loaded before proceeding
+        await subjectsDataPromise;
         const exam = await apiRequest(`/teacher/exams/${examId}`);
         
         document.getElementById('exam_id_hidden').value = exam.exam_id;
@@ -312,15 +437,13 @@ async function editExam(examId) {
         if (formattedDate.length > 16) formattedDate = formattedDate.substring(0, 16);
         document.getElementById('exam-date').value = formattedDate;
 
-        // Select sections (need slight delay for dropdown to populate)
-        setTimeout(() => {
-            const sectionSelect = document.getElementById('exam-section');
-            Array.from(sectionSelect.options).forEach(opt => {
-                if (exam.section_ids.includes(parseInt(opt.value))) {
-                    opt.selected = true;
-                }
-            });
-        }, 100);
+        // Select sections. The change event above should have populated the dropdown.
+        const sectionSelect = document.getElementById('exam-section');
+        Array.from(sectionSelect.options).forEach(opt => {
+            if (exam.section_ids.includes(parseInt(opt.value))) {
+                opt.selected = true;
+            }
+        });
 
         document.getElementById('create-exam-btn').textContent = 'Update Exam';
         document.getElementById('cancel-exam-edit-btn').style.display = 'inline-block';
@@ -342,7 +465,9 @@ async function loadExamsForQuestions() {
         const exams = await apiRequest('/teacher/exams');
         select.innerHTML = '<option value="">Select Exam</option>';
         exams.forEach(e => {
-            select.appendChild(new Option(e.exam_name, e.exam_id));
+            if (e.status !== 'completed') {
+                select.appendChild(new Option(e.exam_name, e.exam_id));
+            }
         });
     } catch (error) {
         console.error("Failed to load exams", error);
@@ -387,8 +512,14 @@ async function handleAddQuestion(event) {
 }
 
 async function loadExamQuestions(examId) {
-    if (!examId) return;
     const container = document.getElementById('questions-list-container');
+    if (!container) return;
+
+    if (!examId) {
+        container.style.display = 'none';
+        return;
+    }
+
     const tbody = document.querySelector('#questions-table tbody');
     const summary = document.getElementById('marks-summary');
     
@@ -481,6 +612,7 @@ async function loadMyExams() {
         if (subjectId) queryParams.append('subject_id', subjectId);
         if (status) queryParams.append('status', status);
         if (search) queryParams.append('search', search);
+        if (showingArchived) queryParams.append('archived', 'true');
 
         const exams = await apiRequest(`/teacher/exams?${queryParams.toString()}`);
         
@@ -496,9 +628,24 @@ async function loadMyExams() {
                 <td>${e.total_marks}</td>
                 <td>${e.sections}</td>
                 <td>${new Date(e.date).toLocaleString()}</td>
-                <td><span class="status-badge ${e.status}">${e.status}</span></td>
-                <td>
-                    ${e.status !== 'active' ? `<button onclick="publishExam(${e.exam_id})" class="btn-edit" style="background-color:#17a2b8; color:white;">Publish</button>` : ''}
+                <td><span class="status-badge ${e.status}" style="text-transform: capitalize;">${e.status}</span></td>
+                <td class="question-actions">
+                    ${showingArchived ? `
+                        <button onclick="restoreExam(${e.exam_id})" class="btn-edit" style="background-color: #3182ce; color: white;">Restore</button>
+                    ` : e.status === 'scheduled' ? `
+                        <button onclick="editMyExam(${e.exam_id})" class="btn-edit" title="Edit Exam">Edit</button>
+                        <button onclick="publishExam(${e.exam_id})" class="btn-edit" style="background-color:#17a2b8; color:white;" title="Publish Exam">Publish</button>
+                        <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                        <button onclick="deleteExam(${e.exam_id})" class="btn-delete" title="Delete Exam">Delete</button>
+                    ` : e.status === 'active' ? `
+                        <button onclick="monitorExam(${e.exam_id})" class="btn-edit" style="background-color:#2b6cb0; color:white;">Monitor</button>
+                        <button onclick="goToExamResults('${e.exam_name.replace(/'/g, "\\'")}')" class="btn-edit" style="background-color:#6f42c1; color:white;">View Results</button>
+                        <button onclick="deleteExam(${e.exam_id})" class="btn-delete" title="Delete Exam">Delete</button>
+                    ` : `
+                        <button onclick="goToExamResults('${e.exam_name.replace(/'/g, "\\'")}')" class="btn-edit" style="background-color:#6f42c1; color:white;">View Results</button>
+                        <button onclick="deleteExam(${e.exam_id})" class="btn-delete" title="Delete Exam">Delete</button>
+                        <button onclick="openReExamModal(${e.exam_id}, ${e.duration})" class="btn-edit" style="background-color: #ed8936; color: white;">Re-Exam</button>
+                    `}
                 </td>
             </tr>
         `).join('');
@@ -513,9 +660,251 @@ async function publishExam(id) {
         const res = await apiRequest(`/teacher/exams/${id}/publish`, 'POST');
         alert(res.message);
         loadMyExams();
+        loadExistingExams();
+        loadDashboardStats();
     } catch (error) {
         alert("Error: " + error.message);
     }
+}
+
+function goToExamResults(examName) {
+    const searchInput = document.getElementById('result-filter-search');
+    if (searchInput) {
+        searchInput.value = examName;
+    }
+    showSection('results');
+}
+
+// --- Real-Time Monitoring ---
+let monitorInterval = null;
+
+async function monitorExam(examId) {
+    showSection('monitor');
+    if (monitorInterval) clearInterval(monitorInterval);
+    
+    await loadExamMonitor(examId);
+    monitorInterval = setInterval(() => loadExamMonitor(examId), 30000); // Refresh every 30s
+}
+
+async function loadExamMonitor(examId) {
+    const container = document.getElementById('monitor-stats-cards');
+    const tbody = document.getElementById('monitor-students-body');
+    
+    try {
+        const data = await apiRequest(`/teacher/exams/${examId}/monitor`);
+        document.getElementById('monitor-exam-name').textContent = data.exam_name;
+
+        container.innerHTML = `
+            <div class="stat-card">
+                <div class="stat-value">${data.stats.assigned}</div>
+                <div class="stat-label">Assigned</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color:#2b6cb0;">${data.stats.started}</div>
+                <div class="stat-label">Started</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color:#28a745;">${data.stats.submitted}</div>
+                <div class="stat-label">Submitted</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color:#e53e3e;">${data.stats.assigned - data.stats.started}</div>
+                <div class="stat-label">Remaining</div>
+            </div>
+        `;
+
+        tbody.innerHTML = data.students.map(s => `
+            <tr>
+                <td><strong>${s.name}</strong></td>
+                <td>${s.usn}</td>
+                <td><span class="status-badge ${s.status === 'IN_PROGRESS' ? 'active' : s.status === 'COMPLETED' ? 'completed' : 'scheduled'}">${s.status.replace('_', ' ')}</span></td>
+                <td><span style="color:${s.violations > 0 ? '#dc3545' : '#28a745'}; font-weight:bold;">${s.violations}</span></td>
+            </tr>
+        `).join('');
+
+    } catch (error) {
+        console.error("Monitor error", error);
+    }
+}
+
+// --- Exam Analytics ---
+async function viewExamAnalytics(examId) {
+    showSection('analytics');
+    if (monitorInterval) clearInterval(monitorInterval);
+    
+    try {
+        const data = await apiRequest(`/teacher/exams/${examId}/analytics`);
+        document.getElementById('analytics-exam-name').textContent = data.exam_name;
+
+        renderScoreDistChart(data.distribution);
+        renderPassFailChart(data.pass_fail);
+        renderQuestionDifficulty(data.question_stats);
+
+    } catch (error) {
+        console.error("Analytics error", error);
+        alert("Failed to load analytics");
+    }
+}
+
+let scoreChart = null;
+function renderScoreDistChart(dist) {
+    const ctx = document.getElementById('scoreDistChart');
+    if (!ctx) return;
+    if (scoreChart) scoreChart.destroy();
+
+    scoreChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: Object.keys(dist),
+            datasets: [{
+                label: 'Students',
+                data: Object.values(dist),
+                backgroundColor: '#3182ce'
+            }]
+        },
+        options: { responsive: true, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+    });
+}
+
+let passFailChart = null;
+function renderPassFailChart(data) {
+    const ctx = document.getElementById('passFailChart');
+    if (!ctx) return;
+    if (passFailChart) passFailChart.destroy();
+
+    passFailChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Pass', 'Fail'],
+            datasets: [{
+                data: [data.pass, data.fail],
+                backgroundColor: ['#48bb78', '#f56565']
+            }]
+        },
+        options: { responsive: true }
+    });
+}
+
+function renderQuestionDifficulty(questions) {
+    const container = document.getElementById('question-difficulty-container');
+    if (!container) return;
+
+    if (questions.length === 0) {
+        container.innerHTML = '<p>No questions found.</p>';
+        return;
+    }
+
+    container.innerHTML = questions.map((q, index) => {
+        let color = '#48bb78'; // Green (Easy)
+        if (q.correct_percentage < 50) color = '#f56565'; // Red (Hard)
+        else if (q.correct_percentage < 75) color = '#ecc94b'; // Yellow (Medium)
+
+        return `
+            <div style="margin-bottom: 15px;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                    <span style="font-weight:600; font-size:0.9rem;">Q${index + 1}: ${q.text.substring(0, 60)}${q.text.length > 60 ? '...' : ''}</span>
+                    <span style="font-weight:bold; color:${color};">${q.correct_percentage}% Correct</span>
+                </div>
+                <div style="background:#edf2f7; height:8px; border-radius:4px; overflow:hidden;">
+                    <div style="width:${q.correct_percentage}%; background:${color}; height:100%;"></div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function goToAddQuestions(examId) {
+    await showSection('questions');
+    resetQuestionForm();
+    const select = document.getElementById('question-exam');
+    if (select) {
+        select.value = examId;
+        select.dispatchEvent(new Event('change'));
+    }
+}
+
+async function editMyExam(examId) {
+    showSection('create-exam');
+    await editExam(examId);
+}
+
+async function deleteExam(examId) {
+    if (!confirm("Are you sure you want to delete this exam and all its questions? This action cannot be undone.")) return;
+    try {
+        const result = await apiRequest(`/teacher/exams/${examId}`, 'DELETE');
+        alert(result.message);
+        loadMyExams();
+    } catch (error) {
+        alert("Error: " + error.message);
+    }
+}
+
+async function restoreExam(examId) {
+    if (!confirm("Restore this exam? It will appear in your active list.")) return;
+    try {
+        const result = await apiRequest(`/teacher/exams/${examId}/restore`, 'PUT');
+        alert(result.message);
+        loadMyExams();
+    } catch (error) {
+        alert("Error: " + error.message);
+    }
+}
+
+async function openReExamModal(examId, duration) {
+    document.getElementById('re-exam-modal').style.display = 'block';
+    document.getElementById('re-exam-id').value = examId;
+    document.getElementById('re-exam-duration').value = duration;
+    
+    // Load students for this exam (from results)
+    const studentSelect = document.getElementById('re-exam-students');
+    studentSelect.innerHTML = '<option>Loading...</option>';
+    
+    try {
+        const results = await apiRequest(`/teacher/exams/${examId}/attempts`);
+        studentSelect.innerHTML = '';
+        if(results.length === 0) {
+             studentSelect.innerHTML = '<option disabled>No students found in results yet.</option>';
+        } else {
+            results.forEach(r => {
+                studentSelect.appendChild(new Option(`${r.student_name} (${r.usn}) - ${r.result_status || 'Absent'}`, r.student_id));
+            });
+        }
+    } catch (e) {
+        studentSelect.innerHTML = '<option disabled>Error loading students</option>';
+    }
+}
+
+function closeReExamModal() {
+    document.getElementById('re-exam-modal').style.display = 'none';
+}
+
+function toggleReExamType() {
+    const type = document.getElementById('re-exam-type').value;
+    document.getElementById('re-exam-students-container').style.display = type === 'students' ? 'block' : 'none';
+}
+
+async function submitReExam() {
+    const examId = document.getElementById('re-exam-id').value;
+    const type = document.getElementById('re-exam-type').value;
+    const date = document.getElementById('re-exam-date').value;
+    const duration = document.getElementById('re-exam-duration').value;
+    
+    const payload = { exam_date: date, duration: parseInt(duration) };
+    let url = `/teacher/exams/${examId}/re-exam/class`;
+
+    if (type === 'students') {
+        const students = Array.from(document.getElementById('re-exam-students').selectedOptions).map(o => parseInt(o.value));
+        if (students.length === 0) return alert("Please select at least one student.");
+        payload.student_ids = students;
+        url = `/teacher/exams/${examId}/re-exam/students`;
+    }
+
+    try {
+        const res = await apiRequest(url, 'POST', payload);
+        alert(res.message);
+        closeReExamModal();
+        loadMyExams();
+    } catch (e) { alert("Error: " + e.message); }
 }
 
 async function loadTeacherResults() {
@@ -526,6 +915,7 @@ async function loadTeacherResults() {
     // Add filters logic here if needed based on HTML IDs
     try {
         const results = await apiRequest('/teacher/results');
+        currentResultsData = results;
         if (results.length === 0) {
             tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No results found.</td></tr>';
             return;
@@ -534,7 +924,7 @@ async function loadTeacherResults() {
             <tr>
                 <td>${r.usn}</td>
                 <td>${r.student_name}</td>
-                <td>${r.section_name}</td>
+                <td>${r.section_name} (Sem ${r.semester})</td>
                 <td>${r.exam_name}</td>
                 <td>${r.subject_name}</td>
                 <td>${r.obtained_marks} / ${r.max_marks}</td>
@@ -545,6 +935,33 @@ async function loadTeacherResults() {
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="8" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
     }
+}
+
+async function exportResultsPDF() {
+    if (!currentResultsData || currentResultsData.length === 0) {
+        alert("No data to export");
+        return;
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    doc.text("Exam Results Report", 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 22);
+
+    const tableColumn = ["USN", "Name", "Section", "Exam", "Subject", "Score", "Status"];
+    const tableRows = currentResultsData.map(r => [
+        r.usn,
+        r.student_name,
+        `${r.section_name} (Sem ${r.semester})`,
+        r.exam_name,
+        r.subject_name,
+        `${r.obtained_marks} / ${r.max_marks}`,
+        r.result_status
+    ]);
+
+    doc.autoTable({ head: [tableColumn], body: tableRows, startY: 30 });
+    doc.save("teacher_exam_results.pdf");
 }
 
 async function loadAssignedSubjects() {
@@ -560,8 +977,8 @@ async function loadAssignedSubjects() {
         tbody.innerHTML = subjects.map(s => `
             <tr>
                 <td><strong>${s.subject_name}</strong></td>
-                <td>${s.section_name} (${s.batch_year}, Sem ${s.semester}) - ${s.student_count} Students</td>
-                <td><button class="btn-edit">View</button></td>
+                <td>${s.section_name} (${s.batch_year}, Sem ${s.semester}) - ${s.student_count} student(s)</td>
+                <td><button class="btn-edit" onclick="viewSectionStudents(${s.section_id})">View Students</button></td>
             </tr>
         `).join('');
     } catch (error) {
@@ -583,12 +1000,38 @@ async function loadAssignedSections() {
             <tr>
                 <td><strong>${s.section_name}</strong></td>
                 <td>${s.semester}</td>
-                <td>${s.student_count}</td>
-                <td><button class="btn-edit">View Students</button></td>
+                <td>${s.student_count} student(s)</td>
+                <td><button class="btn-edit" onclick="viewSectionStudents(${s.section_id})">View Students</button></td>
             </tr>
         `).join('');
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="4" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
+    }
+}
+
+async function viewSectionStudents(sectionId) {
+    const modal = document.getElementById('section-students-modal');
+    const tbody = document.querySelector('#section-students-table tbody');
+    if (!modal || !tbody) return;
+
+    modal.style.display = 'block';
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">Loading...</td></tr>';
+
+    try {
+        const students = await apiRequest(`/teacher/sections/${sectionId}/students`);
+        if (students.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No students in this section.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = students.map(s => `
+            <tr>
+                <td>${s.usn}</td>
+                <td><strong>${s.name}</strong></td>
+                <td>${s.email}</td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="3" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
     }
 }
 
@@ -598,6 +1041,7 @@ async function loadTeacherActivityLogs() {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Loading...</td></tr>';
     try {
         const data = await apiRequest('/teacher/activity-logs');
+        currentLogsData = data.logs;
         if (data.logs.length === 0) {
             tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No logs found.</td></tr>';
             return;
@@ -608,7 +1052,7 @@ async function loadTeacherActivityLogs() {
                 <td>${l.action}</td>
                 <td>${l.student_name || '-'}</td>
                 <td>${l.exam_name || '-'}</td>
-                <td>${l.section_name || '-'}</td>
+                <td>${l.section_name ? `${l.section_name} (Sem ${l.semester})` : (l.exam_sections || '-')}</td>
                 <td>${l.ip_address || '-'}</td>
             </tr>
         `).join('');
@@ -617,15 +1061,42 @@ async function loadTeacherActivityLogs() {
     }
 }
 
+function exportLogsCSV() {
+    if (!currentLogsData || currentLogsData.length === 0) {
+        alert("No logs to export");
+        return;
+    }
+    const headers = ["Timestamp", "Action", "Student", "Exam", "Section", "IP Address"];
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(",")].concat(currentLogsData.map(l => 
+        `"${new Date(l.created_at).toLocaleString()}","${l.action}","${l.student_name || ''}","${l.exam_name || ''}","${l.section_name || ''}","${l.ip_address || ''}"`
+    )).join("\n");
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "teacher_activity_logs.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
 // --- Violation Analytics ---
 async function loadTeacherViolationAnalytics() {
     const container = document.getElementById('teacher-violation-summary-cards');
     container.innerHTML = '<div class="spinner"></div>';
     const status = document.getElementById('teacher-violation-filter-status').value;
+    const examId = document.getElementById('teacher-violation-filter-exam').value;
+    const type = document.getElementById('teacher-violation-filter-type').value;
+    loadViolationHistory();
     
     try {
         let url = '/teacher/violations/stats';
-        if (status) url += `?status=${status}`;
+        const params = new URLSearchParams();
+        if (status) params.append('status', status);
+        if (examId) params.append('exam_id', examId);
+        if (type) params.append('violation_type', type);
+        if ([...params].length > 0) url += `?${params.toString()}`;
+
         const stats = await apiRequest(url);
         
         // 1. Summary Cards
@@ -665,7 +1136,7 @@ async function loadTeacherViolationAnalytics() {
                         ${v.review_status}
                     </span></td>
                     <td>${new Date(v.timestamp).toLocaleTimeString()}</td>
-                    <td><button class="btn-edit" onclick="viewEvidence(${v.violation_id})" style="background-color: #3182ce; color: white;">Review</button></td>
+                    <td><button class="btn-edit" onclick="viewEvidence(${v.violation_id})" style="background-color: #3182ce; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 500; border: none;">Review</button></td>
                 </tr>
             `).join('');
         }
@@ -673,6 +1144,68 @@ async function loadTeacherViolationAnalytics() {
     } catch (error) {
         console.error("Failed to load violation stats", error);
         container.innerHTML = '<p style="color:red">Error loading data.</p>';
+    }
+}
+
+async function loadViolationHistory(page = 1) {
+    const tbody = document.getElementById('violation-history-body');
+    const pagination = document.getElementById('history-pagination');
+    if (!tbody) return;
+    
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>';
+    const status = document.getElementById('history-filter-status').value;
+    const examId = document.getElementById('teacher-violation-filter-exam').value;
+    const search = document.getElementById('history-filter-search').value;
+    const startDate = document.getElementById('history-filter-start-date').value;
+    const endDate = document.getElementById('history-filter-end-date').value;
+    const type = document.getElementById('history-filter-type').value;
+
+    try {
+        const queryParams = new URLSearchParams({ page, limit: 10 });
+        if (status) queryParams.append('status', status);
+        if (examId) queryParams.append('exam_id', examId);
+        if (search) queryParams.append('search', search);
+        if (startDate) queryParams.append('start_date', startDate);
+        if (endDate) queryParams.append('end_date', endDate);
+        if (type) queryParams.append('violation_type', type);
+
+        const data = await apiRequest(`/teacher/violations/history?${queryParams.toString()}`);
+        
+        if (data.history.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No history found.</td></tr>';
+            pagination.innerHTML = '';
+            return;
+        }
+
+        tbody.innerHTML = data.history.map(v => `
+            <tr>
+                <td><strong>${v.student_name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
+                <td>${v.exam_name}</td>
+                <td><span style="color:#DC2626;">${v.violation_type}</span></td>
+                <td><span class="status-badge ${v.review_status === 'Pending' ? 'inactive' : 'active'}">${v.review_status}</span></td>
+                <td>${new Date(v.timestamp).toLocaleString()}</td>
+                <td><small>${v.remarks || '-'}</small></td>
+                <td><button class="btn-edit" onclick="viewEvidence(${v.violation_id})" style="background-color: #3182ce; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 500; border: none;">View</button></td>
+            </tr>
+        `).join('');
+
+        // Simple pagination
+        pagination.innerHTML = `<button onclick="loadViolationHistory(${page-1})" ${page===1?'disabled':''}>&laquo;</button> <span style="padding:5px;">Page ${page}</span> <button onclick="loadViolationHistory(${page+1})" ${page===data.total_pages?'disabled':''}>&raquo;</button>`;
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="7" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
+    }
+}
+
+async function loadExamsForViolationFilter() {
+    const select = document.getElementById('teacher-violation-filter-exam');
+    if (!select || select.options.length > 1) return;
+    try {
+        const exams = await apiRequest('/teacher/exams');
+        exams.forEach(e => {
+            select.appendChild(new Option(e.exam_name, e.exam_id));
+        });
+    } catch (error) {
+        console.error("Failed to load exams for filter", error);
     }
 }
 
@@ -698,9 +1231,9 @@ async function viewEvidence(id) {
             <p><strong>Confidence Score:</strong> ${v.confidence_score}</p>
             <p><strong>Status:</strong> <span style="font-weight:bold; color:${v.review_status === 'Resolved' ? 'green' : v.review_status === 'Dismissed' ? 'gray' : 'red'}">${v.review_status}</span></p>
             
-            ${v.admin_remarks ? `
+            ${v.remarks ? `
                 <div style="margin-top:10px; padding:10px; background:#fff3cd; border-left: 4px solid #ffc107; border-radius:4px;">
-                    <strong>Teacher Remarks:</strong><br>${v.admin_remarks}
+                    <strong>Remarks:</strong><br>${v.remarks}
                 </div>
             ` : ''}
 

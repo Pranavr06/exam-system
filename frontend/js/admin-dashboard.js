@@ -77,8 +77,21 @@ async function loadUserProfile() {
     }
 }
 
+let navHistory = [];
+let isNavigatingBack = false;
+
 // UI Tab Switching Logic
 function showSection(sectionName) {
+    // Capture active section for history
+    const activeSection = document.querySelector('.form-container.active');
+    if (activeSection && !isNavigatingBack) {
+        const activeId = activeSection.id.replace('-section', '');
+        if (activeId !== sectionName) {
+            navHistory.push(activeId);
+        }
+    }
+    isNavigatingBack = false;
+
     // Hide all forms
     document.querySelectorAll('.form-container').forEach(div => {
         div.classList.remove('active');
@@ -93,11 +106,16 @@ function showSection(sectionName) {
     document.getElementById(`${sectionName}-section`).classList.add('active');
     document.querySelector(`.sidebar button[data-section="${sectionName}"]`).classList.add('active');
 
+    updateBreadcrumb(sectionName);
+
     // Reset form to ensure clean state (clears hidden IDs from previous edits)
     if (['section', 'subject', 'teacher', 'student', 'exam'].includes(sectionName)) {
         resetForm(sectionName);
     } else if (sectionName === 'assignment') {
         resetForm('assignment');
+    }
+    if (sectionName === 'my-exams') {
+        loadAdminExams();
     }
 
     if (sectionName === 'result') {
@@ -105,10 +123,53 @@ function showSection(sectionName) {
     }
     if (sectionName === 'violations') {
         loadViolationAnalytics();
+        loadExamsForViolationFilter();
     }
     if (sectionName === 'logs') {
         loadSystemLogs();
     }
+}
+
+function goBack() {
+    if (navHistory.length === 0) return;
+    const prevSection = navHistory.pop();
+    isNavigatingBack = true;
+    showSection(prevSection);
+}
+
+function updateBreadcrumb(section) {
+    const breadcrumb = document.getElementById('breadcrumb');
+    if (!breadcrumb) return;
+
+    const sectionNames = {
+        'dashboard': 'Dashboard',
+        'section': 'Add Section',
+        'subject': 'Add Subject',
+        'teacher': 'Add Teacher',
+        'student': 'Add Student',
+        'assignment': 'Assign Classes',
+        'exam': 'Create Exam',
+        'my-exams': 'My Exams',
+        'question': 'Add Questions',
+        'result': 'View Results',
+        'violations': 'Violations',
+        'logs': 'System Logs'
+    };
+
+    const name = sectionNames[section] || section.charAt(0).toUpperCase() + section.slice(1);
+    
+    const backButtonHtml = navHistory.length > 0 
+        ? `<button class="back-btn" onclick="goBack()" title="Go Back"><i class="fas fa-arrow-left"></i></button>` 
+        : '';
+
+    breadcrumb.innerHTML = `
+        <div class="breadcrumb-container">
+            ${backButtonHtml}
+            <a onclick="showSection('dashboard')">Home</a>
+            <span class="separator">/</span>
+            <span class="current">${name}</span>
+        </div>
+    `;
 }
 
 // --- Dashboard Stats Loader ---
@@ -155,7 +216,10 @@ async function loadDashboardStats() {
                 alertsContainer.innerHTML = '<div class="alert-box success">✅ System Healthy. No alerts.</div>';
             } else {
                 alertsContainer.innerHTML = stats.alerts.map(a => `
-                    <div class="alert-box ${a.type}">${a.message}</div>
+                    <div class="alert-box ${a.type}" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>${a.message}</span>
+                        ${a.action === 'add_questions' ? `<button onclick="goToAddQuestions(${a.exam_id})" class="btn-edit" style="margin-left: 10px; font-size: 0.8rem; padding: 4px 8px;">Fix Now</button>` : ''}
+                    </div>
                 `).join('');
             }
         }
@@ -166,7 +230,7 @@ async function loadDashboardStats() {
             if (stats.recent_exams.length === 0) {
                 recentExamsTable.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">No recent exams</td></tr>';
             } else {
-                recentExamsTable.innerHTML = stats.recent_exams.map(e => `
+                recentExamsTable.innerHTML = stats.recent_exams.slice(0, 5).map(e => `
                     <tr>
                         <td><strong>${e.exam_name}</strong></td>
                         <td>${
@@ -576,6 +640,58 @@ function togglePasswordVisibility(id, btn) {
     }
 }
 
+// --- Import Students ---
+function openImportModal() {
+    openModal('import-modal');
+}
+
+async function handleImportStudents(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    const submitBtn = form.querySelector('button[type="submit"]');
+    
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Importing...";
+
+    try {
+        // Use fetch directly for file upload to handle FormData correctly
+        const token = localStorage.getItem('access_token');
+        const response = await fetch('http://127.0.0.1:8000/admin/students/import', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            },
+            body: formData
+        });
+
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || "Import failed");
+
+        alert(`Import Complete!\nAdded: ${result.stats.added}\nSkipped: ${result.stats.skipped}\nErrors: ${result.stats.errors.length}`);
+        closeModal('import-modal');
+        loadStudentsList();
+    } catch (error) {
+        alert("Error: " + error.message);
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Upload & Import";
+    }
+}
+
+function downloadStudentTemplate() {
+    // Template matching backend expectations
+    const headers = ["name", "email", "usn", "semester", "section_id", "section_label", "password"];
+    const csvContent = "data:text/csv;charset=utf-8," + headers.join(",");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "student_import_template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
 // Load Teachers into Dropdown (for Assignment)
 async function loadTeachers() {
     try {
@@ -614,12 +730,15 @@ async function loadSubjects() {
             if (filterSelect) filterSelect.innerHTML = '<option value="">All Subjects</option>';
             const assignFilterSelect = document.getElementById('assignment-filter-subject');
             if (assignFilterSelect) assignFilterSelect.innerHTML = '<option value="">All Subjects</option>';
+            const myExamFilterSelect = document.getElementById('my-exam-filter-subject');
+            if (myExamFilterSelect) myExamFilterSelect.innerHTML = '<option value="">All Subjects</option>';
 
             subjects.forEach(sub => {
                 select.appendChild(new Option(sub.subject_name, sub.subject_id));
                 if (assignSelect) assignSelect.appendChild(new Option(sub.subject_name, sub.subject_id));
                 if (filterSelect) filterSelect.appendChild(new Option(sub.subject_name, sub.subject_id));
                 if (assignFilterSelect) assignFilterSelect.appendChild(new Option(sub.subject_name, sub.subject_id));
+                if (myExamFilterSelect) myExamFilterSelect.appendChild(new Option(sub.subject_name, sub.subject_id));
             });
         }
     } catch (error) { console.error("Failed to load subjects", error); }
@@ -663,6 +782,8 @@ async function loadExams() {
             if (select) {
                 select.innerHTML = '<option value="">Select Exam</option>';
                 exams.forEach(exam => {
+                    if (id === 'question-exam-id' && exam.status === 'completed') return;
+
                     const option = document.createElement('option');
                     option.value = exam.exam_id;
                     const scopeLabel = exam.exam_scope === 'DEPARTMENT' ? '(Entire Dept)' : 
@@ -695,7 +816,8 @@ async function loadTeachersList() {
                 <div class="question-content"><strong>${t.name}</strong> (${t.email})</div>
                 <div class="question-actions">
                     <button onclick="editEntity('teacher', ${t.teacher_id})" class="btn-edit">Edit</button>
-                    <button onclick="deleteEntity('teachers', ${t.teacher_id})" class="btn-delete">Delete</button>
+                    <button onclick="openDeleteTeacherModal(${t.teacher_id}, '${t.name}')" class="btn-edit" style="background-color: #D97706; color: white; border: none; margin-right: 5px;">Replace</button>
+                    <button onclick="openDeleteTeacherModal(${t.teacher_id}, '${t.name}')" class="btn-delete">Delete</button>
                 </div>
             </div>`
         ).join('');
@@ -820,15 +942,38 @@ async function loadExamsList() {
     container.innerHTML = '<p>Loading...</p>';
     try {
         const exams = await apiRequest('/admin/exams');
-        if (exams.length === 0) {
+        const filteredExams = exams.filter(e => e.status !== 'completed');
+        if (filteredExams.length === 0) {
             container.innerHTML = '<p>No exams found.</p>';
             return;
         }
-        const listHtml = exams.map(e => {
+        const listHtml = filteredExams.map(e => {
             const scopeLabel = e.exam_scope === 'DEPARTMENT' ? '(Entire Dept)' :
                                e.exam_scope === 'BATCH' ? `(Batch ${e.batch_year} - Sem ${e.semester})` :
                                `(${e.section_details || 'Specific Section'})`;
-            return `<div class="question-item" style="border-left: 4px solid ${e.status === 'active' ? '#28a745' : '#ffc107'};">
+            
+            let actionsHtml = '';
+            if (e.status === 'completed') {
+                actionsHtml = `
+                    <button onclick="viewExamResults(${e.exam_id})" class="btn-edit" style="background-color: #6f42c1; color: white;">Results</button>
+                    <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
+                `;
+            } else if (e.status === 'active') {
+                actionsHtml = `
+                    <button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>
+                    <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                    <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
+                `;
+            } else {
+                actionsHtml = `
+                    <button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>
+                    <button onclick="publishExam(${e.exam_id})" class="btn-edit" style="background-color: #17a2b8; color: white;">Publish</button>
+                    <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                    <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
+                `;
+            }
+
+            return `<div class="question-item" style="border-left: 4px solid ${e.status === 'active' ? '#28a745' : e.status === 'completed' ? '#6f42c1' : '#ffc107'};">
                 <div class="question-content">
                     <strong>${e.exam_name} <span style="font-weight:normal; font-size:0.85em; color:#666;">${scopeLabel}</span></strong>
                     <div style="font-size: 0.85rem; color: #666; margin-top: 4px;">
@@ -836,13 +981,7 @@ async function loadExamsList() {
                     </div>
                 </div>
                 <div class="question-actions">
-                    <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;">+Q</button>
-                    ${e.status !== 'active' ? 
-                        `<button onclick="publishExam(${e.exam_id})" class="btn-edit" style="background-color: #17a2b8; color: white;">Publish</button>` : ''
-                    }
-                    <button onclick="viewExamResults(${e.exam_id})" class="btn-edit" style="background-color: #6f42c1; color: white;">Results</button>
-                    <button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>
-                    <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
+                    ${actionsHtml}
                 </div>
             </div>`;
         }).join('');
@@ -850,6 +989,122 @@ async function loadExamsList() {
     } catch (error) {
         console.error("Failed to load exams", error);
         container.innerHTML = '<p style="color: red;">Error loading exams.</p>';
+    }
+}
+
+let showingArchived = false;
+function toggleArchivedExams() {
+    showingArchived = !showingArchived;
+    const btn = document.getElementById('toggle-archived-btn');
+    if (btn) btn.textContent = showingArchived ? "View Active" : "View Archived";
+    loadAdminExams();
+}
+
+async function loadAdminExams() {
+    const tbody = document.getElementById('my-exams-tbody');
+    const deptBody = document.getElementById('dept-exams-tbody');
+    if (!tbody || !deptBody) return;
+
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>';
+    deptBody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>';
+    
+    const subjectId = document.getElementById('my-exam-filter-subject').value;
+    const status = document.getElementById('my-exam-filter-status').value;
+    const search = document.getElementById('my-exam-filter-search').value;
+
+    // Update Headers based on view mode
+    const myHeader = document.getElementById('my-exams-header');
+    const deptHeader = document.getElementById('dept-exams-header');
+    if (myHeader) myHeader.textContent = showingArchived ? "My Created Exams (Archived)" : "My Created Exams";
+    if (deptHeader) deptHeader.textContent = showingArchived ? "Department Exams (Archived)" : "Department Exams";
+
+    try {
+        const queryParams = new URLSearchParams();
+        if (subjectId) queryParams.append('subject_id', subjectId);
+        if (status) queryParams.append('status', status);
+        if (search) queryParams.append('search', search);
+        if (showingArchived) queryParams.append('archived', 'true');
+
+        const allExams = await apiRequest(`/admin/exams?${queryParams.toString()}`);
+        const profile = await apiRequest('/admin/profile'); // Need ID to filter
+        const myId = profile.admin_id; // Assuming profile returns admin_id, if not check response
+
+        // Filter
+        const myExams = allExams.filter(e => e.created_by_admin == myId);
+        const deptExams = allExams.filter(e => e.created_by_admin != myId); // Teachers or other admins
+        
+        const renderRow = (e, isMyExam) => {
+            const scopeLabel = e.exam_scope === 'DEPARTMENT' ? '(Entire Dept)' :
+                               e.exam_scope === 'BATCH' ? `(Batch ${e.batch_year} - Sem ${e.semester})` :
+                               `(${e.section_details || 'Specific Section'})`;
+            
+            let statusBadge = `<span class="status-badge ${e.status}">${e.status}</span>`;
+            if (e.exam_type === 'retake') {
+                statusBadge += ` <span style="font-size:0.75em; background:#e2e8f0; padding:2px 4px; border-radius:4px;">Retake</span>`;
+            }
+
+            let actionsHtml = '';
+            
+            if (showingArchived) {
+                actionsHtml = `
+                    <button onclick="restoreExam(${e.exam_id})" class="btn-edit" style="background-color: #3182ce; color: white;">Restore</button>
+                `;
+            } else if (e.status === 'completed') {
+                actionsHtml = `
+                    <button onclick="viewExamResults(${e.exam_id})" class="btn-edit" style="background-color: #6f42c1; color: white;">Results</button>
+                    <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
+                    <button onclick="openReExamModal(${e.exam_id}, ${e.duration})" class="btn-edit" style="background-color: #ed8936; color: white;">Re-Exam</button>
+                `;
+            } else if (e.status === 'active') {
+                actionsHtml = `
+                    <button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>
+                    <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                    <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
+                `;
+            } else {
+                actionsHtml = `
+                    <button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>
+                    <button onclick="publishExam(${e.exam_id})" class="btn-edit" style="background-color: #17a2b8; color: white;">Publish</button>
+                    <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                    <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
+                `;
+            }
+
+            return `
+            <tr>
+                <td><strong>${e.exam_name}</strong> <span style="font-weight:normal; font-size:0.85em; color:#666;">${scopeLabel}</span></td>
+                <td>${e.subject_name}</td>
+                <td>${e.total_marks}</td>
+                <td>${e.section_details || (e.exam_scope === 'DEPARTMENT' ? 'All' : 'Batch')}</td>
+                <td>${new Date(e.date).toLocaleString()} ${e.parent_exam_id ? '<br><small>(Retake)</small>' : ''}</td>
+                <td>${statusBadge}</td>
+                <td class="question-actions">
+                    ${actionsHtml}
+                </td>
+            </tr>
+            `;
+        };
+
+        if (myExams.length === 0) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No exams created by you.</td></tr>';
+        else tbody.innerHTML = myExams.map(e => renderRow(e, true)).join('');
+
+        if (deptExams.length === 0) deptBody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No other department exams.</td></tr>';
+        else deptBody.innerHTML = deptExams.map(e => renderRow(e, false)).join('');
+
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="7" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
+        deptBody.innerHTML = '';
+    }
+}
+
+async function restoreExam(examId) {
+    if (!confirm("Restore this exam? It will appear in the active list.")) return;
+    try {
+        const result = await apiRequest(`/admin/exams/${examId}/restore`, 'PUT');
+        alert(result.message);
+        loadAdminExams();
+    } catch (error) {
+        alert("Error: " + error.message);
     }
 }
 
@@ -863,12 +1118,78 @@ function goToAddQuestions(examId) {
     }
 }
 
+async function openReExamModal(examId, duration) {
+    document.getElementById('re-exam-modal').style.display = 'block';
+    document.getElementById('re-exam-id').value = examId;
+    document.getElementById('re-exam-duration').value = duration;
+    
+    // Load students for this exam (from results or sections)
+    const studentSelect = document.getElementById('re-exam-students');
+    studentSelect.innerHTML = '<option>Loading...</option>';
+    
+    try {
+        // We can use the results endpoint to get students who took it, 
+        // OR better, get all students assigned to the exam sections.
+        // For now, let's use results to find absent/failed students easily, 
+        // but to be comprehensive, we should fetch all eligible students.
+        // Let's use a new helper or reuse existing. 
+        // Since we don't have a direct "get students for exam" endpoint in admin_exam.py yet,
+        // we will use the results endpoint which lists students.
+        const results = await apiRequest(`/admin/exams/${examId}/results`);
+        studentSelect.innerHTML = '';
+        if(results.length === 0) {
+             studentSelect.innerHTML = '<option disabled>No students found in results yet.</option>';
+        } else {
+            results.forEach(r => {
+                studentSelect.appendChild(new Option(`${r.name} (${r.usn}) - ${r.result_status || 'Absent'}`, r.student_id));
+            });
+        }
+    } catch (e) {
+        studentSelect.innerHTML = '<option disabled>Error loading students</option>';
+    }
+}
+
+function closeReExamModal() {
+    document.getElementById('re-exam-modal').style.display = 'none';
+}
+
+function toggleReExamType() {
+    const type = document.getElementById('re-exam-type').value;
+    document.getElementById('re-exam-students-container').style.display = type === 'students' ? 'block' : 'none';
+}
+
+async function submitReExam() {
+    const examId = document.getElementById('re-exam-id').value;
+    const type = document.getElementById('re-exam-type').value;
+    const date = document.getElementById('re-exam-date').value;
+    const duration = document.getElementById('re-exam-duration').value;
+    
+    const payload = { exam_date: date, duration: parseInt(duration) };
+    let url = `/admin/exams/${examId}/re-exam/class`;
+
+    if (type === 'students') {
+        const students = Array.from(document.getElementById('re-exam-students').selectedOptions).map(o => parseInt(o.value));
+        if (students.length === 0) return alert("Please select at least one student.");
+        payload.student_ids = students;
+        url = `/admin/exams/${examId}/re-exam/students`;
+    }
+
+    try {
+        const res = await apiRequest(url, 'POST', payload);
+        alert(res.message);
+        closeReExamModal();
+        loadAdminExams();
+    } catch (e) { alert("Error: " + e.message); }
+}
+
 async function publishExam(examId) {
     if (!confirm("Are you sure you want to publish this exam? This will validate that question marks match the total marks.")) return;
     try {
         const result = await apiRequest(`/admin/exams/${examId}/publish`, "POST");
         alert(result.message);
         loadExamsList();
+        loadAdminExams();
+        loadDashboardStats();
     } catch (error) {
         alert("Publish Failed: " + error.message);
     }
@@ -950,6 +1271,49 @@ async function loadAssignmentsList() {
     } catch (error) {
         console.error("Failed to load assignments", error);
         tbody.innerHTML = '<tr><td colspan="5" style="color:red; text-align:center;">Error loading assignments.</td></tr>';
+    }
+}
+
+// --- Teacher Deletion with Transfer ---
+let teacherIdToDelete = null;
+
+async function openDeleteTeacherModal(id, name) {
+    teacherIdToDelete = id;
+    document.getElementById('delete-teacher-name').textContent = name;
+    
+    const select = document.getElementById('transfer-teacher-select');
+    select.innerHTML = '<option value="">Loading...</option>';
+    
+    try {
+        const teachers = await apiRequest('/admin/teachers');
+        select.innerHTML = '<option value="">-- Select Replacement Teacher --</option>';
+        
+        teachers.forEach(t => {
+            if (t.teacher_id !== id) { // Don't show the teacher being deleted
+                select.appendChild(new Option(t.name, t.teacher_id));
+            }
+        });
+        
+        document.getElementById('delete-teacher-modal').style.display = 'flex';
+    } catch (error) {
+        alert("Failed to load teachers list.");
+    }
+}
+
+async function confirmDeleteTeacher() {
+    if (!teacherIdToDelete) return;
+    const transferTo = document.getElementById('transfer-teacher-select').value;
+    
+    let url = `/admin/teachers/${teacherIdToDelete}`;
+    if (transferTo) url += `?transfer_to=${transferTo}`;
+
+    try {
+        const result = await apiRequest(url, "DELETE");
+        alert(result.message);
+        document.getElementById('delete-teacher-modal').style.display = 'none';
+        loadTeachersList();
+    } catch (error) {
+        alert("Failed to delete: " + error.message);
     }
 }
 
@@ -1176,6 +1540,33 @@ function renderResultsChart(pass, fail) {
     });
 }
 
+async function exportResultsPDF() {
+    if (!currentResultsData || currentResultsData.length === 0) {
+        alert("No data to export");
+        return;
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    doc.text("Exam Results Report", 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 22);
+
+    const tableColumn = ["USN", "Name", "Sem/Sec", "Exam", "Subject", "Score", "Status"];
+    const tableRows = currentResultsData.map(r => [
+        r.usn,
+        r.student_name,
+        `${r.semester} / ${r.section_name || '-'}`,
+        r.exam_name,
+        r.subject_name,
+        `${r.obtained_marks} / ${r.max_marks}`,
+        r.result_status
+    ]);
+
+    doc.autoTable({ head: [tableColumn], body: tableRows, startY: 30 });
+    doc.save("exam_results.pdf");
+}
+
 function exportResults() {
     if (!currentResultsData || currentResultsData.length === 0) {
         alert("No data to export");
@@ -1198,11 +1589,19 @@ function exportResults() {
 async function loadViolationAnalytics() {
     const container = document.getElementById('violation-summary-cards');
     container.innerHTML = '<div class="spinner"></div>';
+    loadViolationHistory();
     const status = document.getElementById('violation-filter-status').value;
+    const examId = document.getElementById('violation-filter-exam').value;
+    const type = document.getElementById('violation-filter-type').value;
     
     try {
         let url = '/admin/violations/stats';
-        if (status) url += `?status=${status}`;
+        const params = new URLSearchParams();
+        if (status) params.append('status', status);
+        if (examId) params.append('exam_id', examId);
+        if (type) params.append('violation_type', type);
+        if ([...params].length > 0) url += `?${params.toString()}`;
+
         const stats = await apiRequest(url);
         
         // 1. Summary Cards
@@ -1268,7 +1667,7 @@ async function loadViolationAnalytics() {
                     ${v.review_status}
                 </span></td>
                 <td>${new Date(v.timestamp).toLocaleTimeString()}</td>
-                <td><button class="btn-action" onclick="viewEvidence(${v.violation_id})">Review</button></td>
+                <td><button class="btn-edit" onclick="viewEvidence(${v.violation_id})" style="background-color: #3182ce; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 500; border: none;">Review</button></td>
             </tr>
         `).join('');
 
@@ -1284,6 +1683,54 @@ async function loadViolationAnalytics() {
     } catch (error) {
         console.error("Failed to load violation stats", error);
         container.innerHTML = '<p style="color:red">Error loading data.</p>';
+    }
+}
+
+async function loadViolationHistory(page = 1) {
+    const tbody = document.getElementById('violation-history-body');
+    const pagination = document.getElementById('history-pagination');
+    if (!tbody) return;
+    
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>';
+    const status = document.getElementById('history-filter-status').value;
+    const examId = document.getElementById('violation-filter-exam').value;
+    const search = document.getElementById('history-filter-search').value;
+    const startDate = document.getElementById('history-filter-start-date').value;
+    const endDate = document.getElementById('history-filter-end-date').value;
+    const type = document.getElementById('history-filter-type').value;
+
+    try {
+        const queryParams = new URLSearchParams({ page, limit: 10 });
+        if (status) queryParams.append('status', status);
+        if (examId) queryParams.append('exam_id', examId);
+        if (search) queryParams.append('search', search);
+        if (startDate) queryParams.append('start_date', startDate);
+        if (endDate) queryParams.append('end_date', endDate);
+        if (type) queryParams.append('violation_type', type);
+
+        const data = await apiRequest(`/admin/violations/history?${queryParams.toString()}`);
+        
+        if (data.history.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No history found.</td></tr>';
+            pagination.innerHTML = '';
+            return;
+        }
+
+        tbody.innerHTML = data.history.map(v => `
+            <tr>
+                <td><strong>${v.student_name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
+                <td>${v.exam_name}</td>
+                <td><span style="color:#DC2626;">${v.violation_type}</span></td>
+                <td><span class="status-badge ${v.review_status === 'Resolved' ? 'active' : 'inactive'}">${v.review_status}</span></td>
+                <td>${new Date(v.timestamp).toLocaleString()}</td>
+                <td><small>${v.remarks || '-'}</small></td>
+                <td><button class="btn-edit" onclick="viewEvidence(${v.violation_id})" style="background-color: #3182ce; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 500; border: none;">View</button></td>
+            </tr>
+        `).join('');
+
+        pagination.innerHTML = `<button onclick="loadViolationHistory(${page-1})" ${page===1?'disabled':''}>&laquo;</button> <span style="padding:5px;">Page ${page}</span> <button onclick="loadViolationHistory(${page+1})" ${page===data.total_pages?'disabled':''}>&raquo;</button>`;
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="7" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
     }
 }
 
@@ -1363,6 +1810,19 @@ function renderViolationByExamChart(data) {
     });
 }
 
+async function loadExamsForViolationFilter() {
+    const select = document.getElementById('violation-filter-exam');
+    if (!select || select.options.length > 1) return;
+    try {
+        const exams = await apiRequest('/admin/exams');
+        exams.forEach(e => {
+            select.appendChild(new Option(e.exam_name, e.exam_id));
+        });
+    } catch (error) {
+        console.error("Failed to load exams for filter", error);
+    }
+}
+
 let currentViolationId = null;
 
 async function viewEvidence(id) {
@@ -1385,9 +1845,9 @@ async function viewEvidence(id) {
             <p><strong>Confidence Score:</strong> ${v.confidence_score}</p>
             <p><strong>Status:</strong> <span style="font-weight:bold; color:${v.review_status === 'Resolved' ? 'green' : v.review_status === 'Dismissed' ? 'gray' : 'red'}">${v.review_status}</span></p>
             
-            ${v.admin_remarks ? `
+            ${v.remarks ? `
                 <div style="margin-top:10px; padding:10px; background:#fff3cd; border-left: 4px solid #ffc107; border-radius:4px;">
-                    <strong>Admin Remarks:</strong><br>${v.admin_remarks}
+                    <strong>Remarks:</strong><br>${v.remarks}
                 </div>
             ` : ''}
 
@@ -1472,6 +1932,7 @@ async function loadSystemLogs(page = 1) {
 
         const response = await apiRequest(`/admin/dashboard/logs?${queryParams.toString()}`);
         const { logs, total_pages } = response;
+        currentLogsData = logs;
 
         if (logs.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No logs found for the selected criteria.</td></tr>';
@@ -1507,4 +1968,22 @@ async function loadSystemLogs(page = 1) {
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">Error loading logs: ${error.message}</td></tr>`;
     }
+}
+
+function exportLogsCSV() {
+    if (!currentLogsData || currentLogsData.length === 0) {
+        alert("No logs to export");
+        return;
+    }
+    const headers = ["Timestamp", "User", "Role", "Department", "Action", "Entity", "IP Address"];
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(",")].concat(currentLogsData.map(l => 
+        `"${new Date(l.created_at).toLocaleString()}","${l.user_name}","${l.role}","${l.department_name || ''}","${l.action}","${l.entity_type} ${l.entity_id}","${l.ip_address || ''}"`
+    )).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "system_logs.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }

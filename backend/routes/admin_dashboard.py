@@ -5,6 +5,28 @@ from datetime import date
 
 router = APIRouter()
 
+@router.get("/admin/profile")
+def get_admin_profile(user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT a.admin_id, a.name, a.email, d.department_name
+            FROM admin a
+            LEFT JOIN department d ON a.department_id = d.department_id
+            WHERE a.admin_id = %s
+        """, (user["user_id"],))
+        profile = cursor.fetchone()
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return profile
+    finally:
+        cursor.close()
+        conn.close()
+
 @router.get("/admin/dashboard/stats")
 def get_admin_dashboard_stats(user=Depends(get_current_user)):
     if user["role"] != "admin":
@@ -36,13 +58,13 @@ def get_admin_dashboard_stats(user=Depends(get_current_user)):
         cursor.execute("SELECT COUNT(*) as c FROM subject WHERE department_id = %s", (dept_id,))
         stats["total_subjects"] = cursor.fetchone()["c"]
 
-        cursor.execute("SELECT COUNT(*) as c FROM exam WHERE department_id = %s", (dept_id,))
+        cursor.execute("SELECT COUNT(*) as c FROM exam WHERE department_id = %s AND is_archived = 0", (dept_id,))
         stats["total_exams"] = cursor.fetchone()["c"]
 
-        cursor.execute("SELECT COUNT(*) as c FROM exam WHERE department_id = %s AND status = 'active'", (dept_id,))
+        cursor.execute("SELECT COUNT(*) as c FROM exam WHERE department_id = %s AND status = 'active' AND NOW() >= date AND NOW() <= (date + INTERVAL duration MINUTE) AND is_archived = 0", (dept_id,))
         stats["active_exams"] = cursor.fetchone()["c"]
 
-        cursor.execute("SELECT COUNT(*) as c FROM exam WHERE department_id = %s AND status = 'completed'", (dept_id,))
+        cursor.execute("SELECT COUNT(*) as c FROM exam WHERE department_id = %s AND (status = 'completed' OR NOW() > (date + INTERVAL duration MINUTE)) AND is_archived = 0", (dept_id,))
         stats["completed_exams"] = cursor.fetchone()["c"]
 
         # 2. Recent Activity
@@ -51,13 +73,14 @@ def get_admin_dashboard_stats(user=Depends(get_current_user)):
                    CASE
                        WHEN e.status = 'completed' THEN 'completed'
                        WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
-                       ELSE e.status
+                       WHEN e.status = 'active' AND NOW() >= e.date THEN 'active'
+                       ELSE 'scheduled'
                    END as status, e.exam_scope, e.batch_year, e.semester,
                    GROUP_CONCAT(CONCAT(s.section_name, ' (', s.batch_year, ', Sem ', s.semester, ')') SEPARATOR ', ') as section_details
             FROM exam e
             LEFT JOIN exam_section es ON e.exam_id = es.exam_id
             LEFT JOIN section s ON es.section_id = s.section_id
-            WHERE e.department_id = %s 
+            WHERE e.department_id = %s AND e.is_archived = 0
             GROUP BY e.exam_id
             ORDER BY e.exam_id DESC LIMIT 5
         """, (dept_id,))
@@ -74,14 +97,19 @@ def get_admin_dashboard_stats(user=Depends(get_current_user)):
         
         # Exams without questions
         cursor.execute("""
-            SELECT e.exam_name 
+            SELECT e.exam_id, e.exam_name 
             FROM exam e 
             LEFT JOIN question q ON e.exam_id = q.exam_id 
-            WHERE e.department_id = %s AND q.question_id IS NULL
+            WHERE e.department_id = %s AND q.question_id IS NULL AND e.status != 'completed'
         """, (dept_id,))
         empty_exams = cursor.fetchall()
         for e in empty_exams:
-            alerts.append({"type": "warning", "message": f"⚠️ Exam '{e['exam_name']}' has no questions."})
+            alerts.append({
+                "type": "warning", 
+                "message": f"⚠️ Exam '{e['exam_name']}' has no questions.",
+                "action": "add_questions",
+                "exam_id": e["exam_id"]
+            })
 
         # Teachers without subjects
         cursor.execute("""
@@ -102,7 +130,7 @@ def get_admin_dashboard_stats(user=Depends(get_current_user)):
             FROM result r
             JOIN exam e ON r.exam_id = e.exam_id
             JOIN subject s ON e.subject_id = s.subject_id
-            WHERE e.department_id = %s
+            WHERE e.department_id = %s AND e.is_archived = 0
             GROUP BY s.subject_id, s.subject_name
             ORDER BY avg_percentage DESC
             LIMIT 10
@@ -118,7 +146,7 @@ def get_admin_dashboard_stats(user=Depends(get_current_user)):
         conn.close()
 
 @router.get("/admin/violations/stats")
-def get_admin_violation_stats(status: str = Query(None), user=Depends(get_current_user)):
+def get_admin_violation_stats(status: str = Query(None), exam_id: int = Query(None), violation_type: str = Query(None), user=Depends(get_current_user)):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -133,12 +161,18 @@ def get_admin_violation_stats(status: str = Query(None), user=Depends(get_curren
         dept_id = admin_row["department_id"]
 
         # Base filter
-        base_where = "s.department_id = %s"
+        base_where = "e.department_id = %s"
         params = [dept_id]
         
         if status:
             base_where += " AND v.review_status = %s"
             params.append(status)
+        if exam_id:
+            base_where += " AND v.exam_id = %s"
+            params.append(exam_id)
+        if violation_type:
+            base_where += " AND v.violation_type = %s"
+            params.append(violation_type)
 
         stats = {}
         
@@ -146,23 +180,23 @@ def get_admin_violation_stats(status: str = Query(None), user=Depends(get_curren
         cursor.execute(f"""
             SELECT COUNT(v.violation_id) as c 
             FROM violation v
-            JOIN student s ON v.student_id = s.student_id
-            WHERE {base_where} AND DATE(v.`timestamp`) = CURDATE()
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE {base_where} AND DATE(v.detected_at) = CURDATE()
         """, tuple(params))
         stats["today"] = cursor.fetchone()["c"]
         
         cursor.execute(f"""
             SELECT COUNT(v.violation_id) as c 
             FROM violation v
-            JOIN student s ON v.student_id = s.student_id
-            WHERE {base_where} AND YEARWEEK(v.`timestamp`, 1) = YEARWEEK(CURDATE(), 1)
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE {base_where} AND YEARWEEK(v.detected_at, 1) = YEARWEEK(CURDATE(), 1)
         """, tuple(params))
         stats["week"] = cursor.fetchone()["c"]
         
         cursor.execute(f"""
             SELECT COUNT(DISTINCT v.student_id) as c 
             FROM violation v
-            JOIN student s ON v.student_id = s.student_id
+            JOIN exam e ON v.exam_id = e.exam_id
             WHERE {base_where}
         """, tuple(params))
         stats["students_flagged"] = cursor.fetchone()["c"]
@@ -171,18 +205,17 @@ def get_admin_violation_stats(status: str = Query(None), user=Depends(get_curren
             SELECT COUNT(DISTINCT v.exam_id) as c 
             FROM violation v
             JOIN exam e ON v.exam_id = e.exam_id
-            JOIN student s ON v.student_id = s.student_id
             WHERE {base_where}
         """, tuple(params))
         stats["exams_affected"] = cursor.fetchone()["c"]
 
         # 2. Trend (Last 7 Days)
         cursor.execute(f"""
-            SELECT DATE_FORMAT(v.`timestamp`, '%Y-%m-%d') as date, COUNT(v.violation_id) as count 
+            SELECT DATE_FORMAT(v.detected_at, '%Y-%m-%d') as date, COUNT(v.violation_id) as count 
             FROM violation v
-            JOIN student s ON v.student_id = s.student_id
-            WHERE {base_where} AND v.`timestamp` >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) 
-            GROUP BY DATE_FORMAT(v.`timestamp`, '%Y-%m-%d')
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE {base_where} AND v.detected_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) 
+            GROUP BY DATE_FORMAT(v.detected_at, '%Y-%m-%d')
             ORDER BY date ASC
         """, tuple(params))
         stats["trend"] = cursor.fetchall()
@@ -191,7 +224,7 @@ def get_admin_violation_stats(status: str = Query(None), user=Depends(get_curren
         cursor.execute(f"""
             SELECT v.violation_type, COUNT(v.violation_id) as count 
             FROM violation v
-            JOIN student s ON v.student_id = s.student_id
+            JOIN exam e ON v.exam_id = e.exam_id
             WHERE {base_where}
             GROUP BY v.violation_type
         """, tuple(params))
@@ -199,13 +232,13 @@ def get_admin_violation_stats(status: str = Query(None), user=Depends(get_curren
 
         # 4. Recent Violations
         cursor.execute(f"""
-            SELECT v.violation_id, s.name, s.usn, d.department_name, e.exam_name, v.violation_type, v.`timestamp`, v.review_status
+            SELECT v.violation_id, s.name, s.usn, d.department_name, e.exam_name, v.violation_type, v.detected_at as timestamp, v.review_status
             FROM violation v 
             JOIN student s ON v.student_id = s.student_id 
             JOIN department d ON s.department_id = d.department_id
             JOIN exam e ON v.exam_id = e.exam_id 
             WHERE {base_where}
-            ORDER BY v.`timestamp` DESC LIMIT 10
+            ORDER BY v.detected_at DESC LIMIT 10
         """, tuple(params))
         stats["recent"] = cursor.fetchall()
 
@@ -216,6 +249,7 @@ def get_admin_violation_stats(status: str = Query(None), user=Depends(get_curren
             SELECT s.name, s.usn, COUNT(v.violation_id) as violation_count 
             FROM violation v 
             JOIN student s ON v.student_id = s.student_id 
+            JOIN exam e ON v.exam_id = e.exam_id
             WHERE {base_where}
             GROUP BY s.student_id 
             HAVING violation_count > 1 
@@ -228,7 +262,6 @@ def get_admin_violation_stats(status: str = Query(None), user=Depends(get_curren
             SELECT e.exam_name, COUNT(v.violation_id) as count
             FROM violation v
             JOIN exam e ON v.exam_id = e.exam_id
-            JOIN student s ON v.student_id = s.student_id
             WHERE {base_where}
             GROUP BY e.exam_id
             ORDER BY count DESC LIMIT 5
@@ -269,7 +302,7 @@ def get_violation_details(violation_id: int, user=Depends(get_current_user)):
             JOIN student s ON v.student_id = s.student_id
             JOIN exam e ON v.exam_id = e.exam_id
             LEFT JOIN question q ON v.question_id = q.question_id
-            WHERE v.violation_id = %s AND s.department_id = %s
+            WHERE v.violation_id = %s AND e.department_id = %s
         """, (violation_id, dept_id))
         
         violation = cursor.fetchone()
@@ -308,9 +341,9 @@ def resolve_violation(
         
         # Check existence and access in one go
         cursor.execute("""
-            UPDATE violation v JOIN student s ON v.student_id = s.student_id 
-            SET v.review_status = %s, v.admin_remarks = %s 
-            WHERE v.violation_id = %s AND s.department_id = %s
+            UPDATE violation v JOIN exam e ON v.exam_id = e.exam_id
+            SET v.review_status = %s, v.remarks = %s 
+            WHERE v.violation_id = %s AND e.department_id = %s
         """, (status, remarks, violation_id, dept_id))
         
         if cursor.rowcount == 0:
@@ -322,8 +355,8 @@ def resolve_violation(
         if status == 'Resolved':
             cursor.execute("""
                 SELECT v.student_id FROM violation v 
-                JOIN student s ON v.student_id = s.student_id 
-                WHERE v.violation_id = %s AND s.department_id = %s
+                JOIN exam e ON v.exam_id = e.exam_id
+                WHERE v.violation_id = %s AND e.department_id = %s
             """, (violation_id, dept_id))
             row = cursor.fetchone()
             if row:

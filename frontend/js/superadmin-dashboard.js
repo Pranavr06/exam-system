@@ -3,15 +3,32 @@ document.addEventListener("DOMContentLoaded", () => {
     loadUserProfile();
     showSection('dashboard');
 
-    // Form submit listeners
+    // Department create form
     const deptForm = document.getElementById('department-form');
     if (deptForm) deptForm.addEventListener('submit', handleSaveDepartment);
-    
+
+    const createDeptForm = document.getElementById('create-department-form');
+    if (createDeptForm) createDeptForm.addEventListener('submit', handleSaveDepartment);
+
+    const editDeptForm = document.getElementById('department-edit-form');
+    if (editDeptForm) editDeptForm.addEventListener('submit', handleSaveDepartment);
+
+    // Admin form
     const adminForm = document.getElementById('admin-form');
     if (adminForm) adminForm.addEventListener('submit', handleSaveAdmin);
-    
-    const resetPwdForm = document.getElementById('reset-password-form');
-    if (resetPwdForm) resetPwdForm.addEventListener('submit', handleResetPassword);
+
+    // Replace admin
+    const replaceAdminForm = document.getElementById('replace-admin-form');
+    if (replaceAdminForm) replaceAdminForm.addEventListener('submit', handleReplaceAdmin);
+
+    // Violations filter
+    const examFilter = document.getElementById('sa-violation-filter-exam');
+    if (examFilter) {
+        examFilter.addEventListener('change', () => {
+            loadViolationAnalytics();
+            loadViolationHistory();
+        });
+    }
 });
 
 function loadUserProfile() {
@@ -22,8 +39,21 @@ function loadUserProfile() {
     }
 }
 
+let navHistory = [];
+let isNavigatingBack = false;
+
 // UI Tab Switching Logic
 function showSection(sectionName) {
+    // Capture active section for history
+    const activeSection = document.querySelector('.form-container.active');
+    if (activeSection && !isNavigatingBack) {
+        const activeId = activeSection.id.replace('-section', '');
+        if (activeId !== sectionName) {
+            navHistory.push(activeId);
+        }
+    }
+    isNavigatingBack = false;
+
     document.querySelectorAll('.form-container').forEach(div => {
         div.classList.remove('active');
     });
@@ -33,45 +63,110 @@ function showSection(sectionName) {
     document.getElementById(`${sectionName}-section`).classList.add('active');
     document.querySelector(`.sidebar button[data-section="${sectionName}"]`).classList.add('active');
 
+    updateBreadcrumb(sectionName);
+
     // Load data for the section
     if (sectionName === 'dashboard') loadDashboardStats();
     if (sectionName === 'departments') loadDepartments();
     if (sectionName === 'admins') loadAdmins();
     if (sectionName === 'teachers') { loadAllTeachers(); loadDepartmentsForTeacherFilter(); }
     if (sectionName === 'students') { loadStudentStats(); loadAllStudents(); loadDepartmentsForStudentFilter(); }
-    if (sectionName === 'violations') loadViolationAnalytics();
-    if (sectionName === 'exams') { loadAllExams(); loadDepartmentsForExamFilter(); }
+    if (sectionName === 'violations') {
+    loadViolationAnalytics();
+    loadViolationHistory();
+    loadExamsForViolationFilter();
+}
+
+if (sectionName === 'exams') {
+    loadAllExams();
+    loadDepartmentsForExamFilter();
+}
     if (sectionName === 'admins') loadDepartmentsForDropdown();
     if (sectionName === 'logs') loadSystemLogs();
 }
 
+function goBack() {
+    if (navHistory.length === 0) return;
+    const prevSection = navHistory.pop();
+    isNavigatingBack = true;
+    showSection(prevSection);
+}
+
+function updateBreadcrumb(section) {
+    const breadcrumb = document.getElementById('breadcrumb');
+    if (!breadcrumb) return;
+
+    const sectionNames = {
+        'dashboard': 'Dashboard',
+        'departments': 'Departments',
+        'admins': 'Admins',
+        'teachers': 'Teachers',
+        'students': 'Students',
+        'violations': 'Violations',
+        'exams': 'Exams',
+        'logs': 'System Logs'
+    };
+
+    const name = sectionNames[section] || section.charAt(0).toUpperCase() + section.slice(1);
+    
+    const backButtonHtml = navHistory.length > 0 
+        ? `<button class="back-btn" onclick="goBack()" title="Go Back"><i class="fas fa-arrow-left"></i></button>` 
+        : '';
+
+    breadcrumb.innerHTML = `
+        <div class="breadcrumb-container">
+            ${backButtonHtml}
+            <a onclick="showSection('dashboard')">Home</a>
+            <span class="separator">/</span>
+            <span class="current">${name}</span>
+        </div>
+    `;
+}
+
 async function loadDashboardStats() {
     const container = document.getElementById('sa-stats-container');
+    const alertsContainer = document.getElementById('sa-alerts-container');
     container.innerHTML = '<div class="spinner"></div>';
+    checkSystemHealth(); // Check health when loading dashboard
     try {
         const stats = await apiRequest('/superadmin/dashboard/stats');
+        
+        // Render Alerts
+        if (alertsContainer) {
+            if (stats.alerts && stats.alerts.length > 0) {
+                alertsContainer.innerHTML = stats.alerts.map(a => `
+                    <div class="alert-box ${a.type}" style="background-color: #fff3cd; color: #856404; padding: 12px; margin-bottom: 10px; border: 1px solid #ffeeba; border-radius: 6px; display: flex; align-items: center;">
+                        <i class="fas fa-exclamation-triangle" style="margin-right: 10px;"></i>
+                        <span>${a.message}</span>
+                    </div>
+                `).join('');
+            } else {
+                alertsContainer.innerHTML = '';
+            }
+        }
+
         container.innerHTML = `
-            <div class="sa-stat-card">
+            <div class="sa-stat-card" onclick="showSection('departments')">
                 <div class="icon departments"><i class="fas fa-building"></i></div>
                 <div class="info"><div class="value">${stats.total_departments}</div><div class="label">Departments</div></div>
             </div>
-            <div class="sa-stat-card">
+            <div class="sa-stat-card" onclick="showSection('admins')">
                 <div class="icon admins"><i class="fas fa-user-shield"></i></div>
                 <div class="info"><div class="value">${stats.total_admins}</div><div class="label">Admins</div></div>
             </div>
-            <div class="sa-stat-card">
+            <div class="sa-stat-card" onclick="showSection('teachers')">
                 <div class="icon active-admins"><i class="fas fa-chalkboard-teacher"></i></div>
                 <div class="info"><div class="value">${stats.total_teachers}</div><div class="label">Teachers</div></div>
             </div>
-            <div class="sa-stat-card">
+            <div class="sa-stat-card" onclick="showSection('students')">
                 <div class="icon" style="background:#F3E8FF; color:#7C3AED;"><i class="fas fa-user-graduate"></i></div>
                 <div class="info"><div class="value">${stats.total_students}</div><div class="label">Students</div></div>
             </div>
-            <div class="sa-stat-card">
+            <div class="sa-stat-card" onclick="showSection('exams')">
                 <div class="icon" style="background:#E0F2FE; color:#0284C7;"><i class="fas fa-file-alt"></i></div>
                 <div class="info"><div class="value">${stats.total_exams}</div><div class="label">Exams</div></div>
             </div>
-            <div class="sa-stat-card">
+            <div class="sa-stat-card" onclick="showSection('violations')">
                 <div class="icon" style="background:#FEE2E2; color:#DC2626;"><i class="fas fa-exclamation-triangle"></i></div>
                 <div class="info"><div class="value">${stats.total_violations}</div><div class="label">Violations</div></div>
             </div>
@@ -94,7 +189,7 @@ async function loadDashboardStats() {
         if (stats.active_exams.length === 0) {
             activeExamsBody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">No active exams currently.</td></tr>';
         } else {
-            activeExamsBody.innerHTML = stats.active_exams.map(e => `
+            activeExamsBody.innerHTML = stats.active_exams.slice(0, 5).map(e => `
                 <tr>
                     <td><strong>${e.exam_name}</strong></td>
                     <td><span class="dept-badge">${e.department_name}</span></td>
@@ -109,7 +204,7 @@ async function loadDashboardStats() {
         if (stats.recent_violations.length === 0) {
             violationsList.innerHTML = '<p style="color:#666; text-align:center; padding:10px;">No recent violations.</p>';
         } else {
-            violationsList.innerHTML = stats.recent_violations.map(v => `
+            violationsList.innerHTML = stats.recent_violations.slice(0, 5).map(v => `
                 <div class="activity-item violation">
                     <div class="act-icon"><i class="fas fa-exclamation-circle"></i></div>
                     <div class="act-content">
@@ -126,7 +221,7 @@ async function loadDashboardStats() {
         if (stats.recent_activity.length === 0) {
             activityList.innerHTML = '<p style="color:#666; text-align:center; padding:10px;">No recent activity.</p>';
         } else {
-            activityList.innerHTML = stats.recent_activity.map(a => `
+            activityList.innerHTML = stats.recent_activity.slice(0, 5).map(a => `
                 <div class="activity-item">
                     <div class="act-icon normal"><i class="fas fa-info"></i></div>
                     <div class="act-content">
@@ -166,7 +261,7 @@ async function loadDashboardStats() {
             if (stats.top_teachers.length === 0) {
                 teacherBody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">No teacher activity yet.</td></tr>';
             } else {
-                teacherBody.innerHTML = stats.top_teachers.map(t => `
+                teacherBody.innerHTML = stats.top_teachers.slice(0, 5).map(t => `
                     <tr>
                         <td><strong>${t.name}</strong></td>
                         <td><span class="dept-badge" style="font-size:0.75rem;">${t.department_name}</span></td>
@@ -180,6 +275,27 @@ async function loadDashboardStats() {
     } catch (error) {
         container.innerHTML = '<p style="color:red">Failed to load stats.</p>';
         console.error(error);
+    }
+}
+
+async function checkSystemHealth() {
+    const dbEl = document.getElementById('health-db-status');
+    const serverEl = document.getElementById('health-server-status');
+    if (!dbEl || !serverEl) return;
+
+    try {
+        const status = await apiRequest('/superadmin/system/health');
+        
+        dbEl.innerHTML = `● ${status.database}`;
+        dbEl.style.color = status.database === 'Active' ? '#10B981' : '#EF4444';
+
+        serverEl.innerHTML = `● ${status.server}`;
+        serverEl.style.color = '#10B981';
+    } catch (error) {
+        dbEl.innerHTML = `● Unknown`;
+        dbEl.style.color = '#EF4444';
+        serverEl.innerHTML = `● Offline`;
+        serverEl.style.color = '#EF4444';
     }
 }
 
@@ -362,17 +478,24 @@ async function loadAdmins() {
                 <td><strong>${a.name}</strong></td>
                 <td>${a.email}</td>
                 <td>${a.department_name || '<span style="color:#999">Unassigned</span>'}</td>
-                <td><span class="status-badge ${a.is_active ? 'active' : 'inactive'}">${a.is_active ? 'Active' : 'Inactive'}</span></td>
                 <td class="actions">
                     <button class="btn-action" onclick="editAdmin(${a.admin_id})">Edit</button>
-                    <button class="btn-action" onclick="toggleAdminStatus(${a.admin_id}, ${!a.is_active})">${a.is_active ? 'Disable' : 'Enable'}</button>
-                    <button class="btn-action" onclick="openResetPasswordModal(${a.admin_id}, '${a.name}')">Reset Pass</button>
+                    <button class="btn-action" onclick="openReplaceAdminModal(${a.admin_id}, '${a.name}')" style="color: #D97706;">Replace</button>
+                    <button class="btn-action" onclick="confirmDelete('admin', ${a.admin_id})" style="color: #DC2626;">Delete</button>
                 </td>
             </tr>
         `).join('');
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="5" style="color:red;text-align:center">Error: ${error.message}</td></tr>`;
     }
+}
+
+function openReplaceAdminModal(id, name) {
+    const form = document.getElementById('replace-admin-form');
+    form.reset();
+    form.querySelector('input[name="current_admin_id"]').value = id;
+    document.getElementById('replace-current-name').textContent = name;
+    openModal('replace-admin-modal');
 }
 
 async function handleSaveDepartment(event) {
@@ -417,26 +540,19 @@ async function handleSaveAdmin(event) {
     }
 }
 
-async function handleResetPassword(event) {
+async function handleReplaceAdmin(event) {
     event.preventDefault();
-    const form = event.target;
-    const id = form.querySelector('input[name="admin_id"]').value;
-    const password = form.querySelector('input[name="password"]').value;
-    try {
-        const result = await apiRequest(`/superadmin/admins/${id}/password`, 'PUT', { password });
-        alert(result.message);
-        closeModal('reset-password-modal');
-    } catch (error) {
-        alert(`Error: ${error.message}`);
-    }
-}
+    if (!confirm("Are you sure you want to replace this admin? This action is irreversible.")) return;
 
-async function toggleAdminStatus(adminId, newStatus) {
-    const action = newStatus ? 'enable' : 'disable';
-    if (!confirm(`Are you sure you want to ${action} this admin account?`)) return;
+    const form = event.target;
+    const formData = new FormData(form);
+    const data = Object.fromEntries(formData.entries());
+    data.current_admin_id = parseInt(data.current_admin_id);
+
     try {
-        const result = await apiRequest(`/superadmin/admins/${adminId}/status`, 'PUT', { is_active: newStatus });
+        const result = await apiRequest('/superadmin/admins/replace', 'POST', data);
         alert(result.message);
+        closeModal('replace-admin-modal');
         loadAdmins();
     } catch (error) {
         alert(`Error: ${error.message}`);
@@ -456,6 +572,7 @@ function confirmDelete(type, id) {
             alert(result.message);
             closeModal('delete-confirm-modal');
             if (type === 'department') loadDepartments();
+            if (type === 'admin') loadAdmins();
         } catch (error) {
             alert(`Error: ${error.message}`);
         }
@@ -555,14 +672,6 @@ function resetAdminForm() {
     document.querySelector('#admins-section .sa-card-title').textContent = "Create New Admin";
 }
 
-function openResetPasswordModal(id, name) {
-    const form = document.getElementById('reset-password-form');
-    form.reset();
-    form.querySelector('input[name="admin_id"]').value = id;
-    document.getElementById('reset-admin-name').textContent = name;
-    openModal('reset-password-modal');
-}
-
 async function loadDepartmentsForExamFilter() {
     const deptSelect = document.getElementById('exam-filter-dept');
     if (!deptSelect || deptSelect.options.length > 1) return; // Don't reload if already populated
@@ -656,11 +765,15 @@ async function loadStudentStats() {
     }
 }
 
+let studentStrengthChart = null;
+let studentParticipationChart = null;
+
 function renderStudentCharts(data) {
     // Dept Strength Chart
     const ctx1 = document.getElementById('deptStrengthChart');
     if (ctx1) {
-        new Chart(ctx1, {
+        if (studentStrengthChart) studentStrengthChart.destroy();
+        studentStrengthChart = new Chart(ctx1, {
             type: 'bar',
             data: {
                 labels: data.map(d => d.department_name),
@@ -677,7 +790,8 @@ function renderStudentCharts(data) {
     // Participation Chart
     const ctx2 = document.getElementById('participationChart');
     if (ctx2) {
-        new Chart(ctx2, {
+        if (studentParticipationChart) studentParticipationChart.destroy();
+        studentParticipationChart = new Chart(ctx2, {
             type: 'bar',
             data: {
                 labels: data.map(d => d.department_name),
@@ -742,81 +856,121 @@ async function loadAllStudents() {
 }
 
 async function loadViolationAnalytics() {
+
     const container = document.getElementById('violation-summary-cards');
     container.innerHTML = '<div class="spinner"></div>';
+
     const status = document.getElementById('sa-violation-filter-status').value;
-    
+    const examId = document.getElementById('sa-violation-filter-exam').value;
+    const type = document.getElementById('sa-violation-filter-type').value;
+
     try {
+
         let url = '/superadmin/violations/stats';
-        if (status) url += `?status=${status}`;
+        const params = new URLSearchParams();
+
+        if (status) params.append('status', status);
+        if (examId) params.append('exam_id', examId);
+        if (type) params.append('violation_type', type);
+
+        if ([...params].length > 0) url += `?${params.toString()}`;
+
         const stats = await apiRequest(url);
-        
-        // 1. Summary Cards
+
         container.innerHTML = `
             <div class="sa-stat-card">
                 <div class="icon" style="background:#FEE2E2; color:#DC2626;"><i class="fas fa-exclamation-circle"></i></div>
                 <div class="info"><div class="value">${stats.today}</div><div class="label">Violations Today</div></div>
             </div>
+
             <div class="sa-stat-card">
                 <div class="icon" style="background:#FFEDD5; color:#D97706;"><i class="fas fa-calendar-week"></i></div>
                 <div class="info"><div class="value">${stats.week}</div><div class="label">Violations This Week</div></div>
             </div>
+
             <div class="sa-stat-card">
                 <div class="icon" style="background:#E0E7FF; color:#4F46E5;"><i class="fas fa-user-tag"></i></div>
                 <div class="info"><div class="value">${stats.students_flagged}</div><div class="label">Students Flagged</div></div>
             </div>
+
             <div class="sa-stat-card">
                 <div class="icon" style="background:#F3F4F6; color:#4B5563;"><i class="fas fa-file-contract"></i></div>
                 <div class="info"><div class="value">${stats.exams_affected}</div><div class="label">Exams Affected</div></div>
             </div>
         `;
 
-        // 2. Charts
         renderViolationTrendChart(stats.trend);
         renderViolationDeptChart(stats.by_dept);
         renderViolationTypeChart(stats.by_type);
 
-        // 3. Alerts
-        const alertsContainer = document.getElementById('violation-alerts-container');
-        let alertsHtml = '';
-        if (stats.today > 5) alertsHtml += `<div class="activity-item violation"><div class="act-icon"><i class="fas fa-exclamation"></i></div><div class="act-content"><strong>High Violation Rate</strong><br>${stats.today} violations recorded today.</div></div>`;
-        // Add more logic based on data if needed
-        if (stats.recent.some(v => v.violation_type.includes('Mobile'))) alertsHtml += `<div class="activity-item violation"><div class="act-icon"><i class="fas fa-mobile-alt"></i></div><div class="act-content"><strong>Mobile Device Detected</strong><br>Recent mobile usage attempts found.</div></div>`;
-        
-        if (!alertsHtml) alertsHtml = '<p style="color:#666; padding:10px;">No critical alerts at this moment.</p>';
-        alertsContainer.innerHTML = alertsHtml;
+    } catch (error) {
 
-        // 4. Recent Violations Table
-        const recentBody = document.getElementById('recent-violations-full-body');
-        recentBody.innerHTML = stats.recent.map(v => `
+        console.error("Failed to load violation stats", error);
+        container.innerHTML = '<p style="color:red">Error loading data.</p>';
+
+    }
+}
+
+async function loadViolationHistory(page = 1) {
+
+    const tbody = document.getElementById('violation-history-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>';
+
+    const status = document.getElementById('history-filter-status')?.value;
+    const examId = document.getElementById('sa-violation-filter-exam')?.value;
+    const search = document.getElementById('history-filter-search')?.value;
+    const startDate = document.getElementById('history-filter-start-date')?.value;
+    const endDate = document.getElementById('history-filter-end-date')?.value;
+    const type = document.getElementById('history-filter-type')?.value;
+
+    try {
+
+        let url = `/superadmin/violations/history?page=${page}&limit=10`;
+
+        if (status) url += `&status=${status}`;
+        if (examId) url += `&exam_id=${examId}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+        if (startDate) url += `&start_date=${startDate}`;
+        if (endDate) url += `&end_date=${endDate}`;
+        if (type) url += `&violation_type=${type}`;
+
+        const data = await apiRequest(url);
+
+        if (!data.history || data.history.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No violations found.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.history.map(v => `
             <tr>
-                <td><strong>${v.name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
+                <td><strong>${v.student_name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
                 <td><span class="dept-badge">${v.department_name}</span></td>
                 <td>${v.exam_name}</td>
-                <td><span style="color:#DC2626; font-weight:500;">${v.violation_type}</span></td>
-                <td><span class="status-badge" style="
-                    background-color: ${v.review_status === 'Resolved' ? '#DCFCE7' : v.review_status === 'Dismissed' ? '#F1F5F9' : '#FEF2F2'};
-                    color: ${v.review_status === 'Resolved' ? '#16A34A' : v.review_status === 'Dismissed' ? '#64748B' : '#DC2626'};
-                    padding: 4px 8px; border-radius: 12px; font-size: 0.75rem;
-                ">
-                    ${v.review_status}
-                </span></td>
-                <td>${new Date(v.timestamp).toLocaleTimeString()}</td>
-            </tr>
-        `).join('');
-
-        // 5. High Risk Students
-        const riskBody = document.getElementById('high-risk-students-body');
-        riskBody.innerHTML = stats.high_risk.map(s => `
-            <tr>
-                <td><strong>${s.name}</strong> <br><span style="font-size:0.8em; color:#666;">${s.department_name}</span></td>
-                <td><span class="status-badge inactive" style="background:#FEE2E2; color:#DC2626;">${s.violation_count} Violations</span></td>
+                <td><span style="color:#DC2626;">${v.violation_type}</span></td>
+                <td>
+                    <span class="status-badge ${v.review_status === 'Resolved' ? 'active' : 'inactive'}">
+                        ${v.review_status}
+                    </span>
+                </td>
+                <td>${new Date(v.timestamp).toLocaleString()}</td>
+                <td><small>${v.admin_remarks || '-'}</small></td>
+                <td><small>${v.remarks || '-'}</small></td>
             </tr>
         `).join('');
 
     } catch (error) {
-        console.error("Failed to load violation stats", error);
-        container.innerHTML = '<p style="color:red">Error loading data.</p>';
+
+        console.error("Violation history error", error);
+
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" style="color:red;text-align:center;">
+                    Failed to load violation history
+                </td>
+            </tr>
+        `;
     }
 }
 
@@ -882,6 +1036,27 @@ function renderViolationTypeChart(data) {
     });
 }
 
+async function loadExamsForViolationFilter() {
+    const select = document.getElementById('sa-violation-filter-exam');
+    if (!select || select.options.length > 1) return;
+    try {
+        const exams = await apiRequest('/superadmin/exams');
+        exams.forEach(e => {
+            select.appendChild(new Option(e.exam_name, e.exam_id));
+        });
+    } catch (error) {
+        console.error("Failed to load exams for filter", error);
+    }
+}
+
+let showingArchived = false;
+function toggleArchivedExams() {
+    showingArchived = !showingArchived;
+    const btn = document.getElementById('toggle-archived-btn');
+    if (btn) btn.textContent = showingArchived ? "View Active" : "View Archived";
+    loadAllExams();
+}
+
 async function loadAllExams() {
     const tbody = document.getElementById('all-exams-table-body');
     if (!tbody) return;
@@ -891,11 +1066,16 @@ async function loadAllExams() {
     const status = document.getElementById('exam-filter-status').value;
     const search = document.getElementById('exam-filter-search').value;
 
+    // Update Header
+    const header = document.getElementById('global-exams-header');
+    if (header) header.textContent = showingArchived ? "Global Exam Monitoring (Archived)" : "Global Exam Monitoring";
+
     try {
         const queryParams = new URLSearchParams();
         if (deptId) queryParams.append('department_id', deptId);
         if (status) queryParams.append('status', status);
         if (search) queryParams.append('search', search);
+        if (showingArchived) queryParams.append('archived', 'true');
 
         const exams = await apiRequest(`/superadmin/exams?${queryParams.toString()}`);
 
@@ -913,11 +1093,48 @@ async function loadAllExams() {
                 <td>${e.created_by}</td>
                 <td><span class="status-badge ${e.status}">${e.status}</span></td>
                 <td>${new Date(e.date).toLocaleString()}</td>
+                <td>
+                    ${showingArchived ? 
+                        `<button onclick="restoreExam(${e.exam_id})" class="btn-action" style="color: #3182ce;">Restore</button>` : 
+                        '-'
+                    }
+                </td>
             </tr>
         `).join('');
 
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="7" style="color:red; text-align:center;">Error loading exams: ${error.message}</td></tr>`;
+    }
+}
+
+async function restoreExam(examId) {
+    if (!confirm("Restore this exam?")) return;
+    try {
+        const result = await apiRequest(`/superadmin/exams/${examId}/restore`, 'PUT');
+        alert(result.message);
+        loadAllExams();
+    } catch (error) {
+        alert("Error: " + error.message);
+    }
+}
+
+async function cleanupArchivedExams() {
+    const days = prompt("Enter the number of days (exams older than this will be permanently deleted):", "30");
+    if (days === null) return;
+    
+    if (isNaN(days) || days < 1) {
+        alert("Please enter a valid number of days.");
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to PERMANENTLY delete archived exams older than ${days} days? This cannot be undone.`)) return;
+
+    try {
+        const result = await apiRequest(`/superadmin/exams/cleanup?days=${days}`, 'DELETE');
+        alert(result.message);
+        loadAllExams();
+    } catch (error) {
+        alert("Error: " + error.message);
     }
 }
 

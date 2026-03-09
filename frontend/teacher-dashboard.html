@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
 <body>
     <div class="sidebar">
         <h2>Teacher Panel</h2>
@@ -35,6 +37,7 @@
         </header>
 
         <div class="main-scrollable-content">
+            <div id="breadcrumb" class="breadcrumb"></div>
             
             <!-- 1. Dashboard Overview -->
             <div id="dashboard-section" class="form-container active" style="background: transparent; border: none; box-shadow: none; padding: 0;">
@@ -42,6 +45,7 @@
                 <div class="dashboard-grid" id="stats-container">
                     <!-- Stats loaded via JS -->
                 </div>
+                <div id="teacher-alerts-container" style="margin-bottom: 20px; margin-top: 20px;"></div>
 
                 <div class="dashboard-content-row" style="display: flex; gap: 20px; margin-top: 30px; flex-wrap: wrap;">
                     <div class="dashboard-main-col" style="flex: 2; min-width: 300px;">
@@ -145,7 +149,7 @@
                 <h4 style="margin-top: 0; color: #2c3e50; margin-bottom: 15px;">Existing Exams</h4>
                 <table id="existing-exams-table">
                     <thead>
-                        <tr><th>Exam Name</th><th>Total Marks</th><th>Sections</th><th>Date</th><th>Actions</th></tr>
+                        <tr><th>Exam Name</th><th>Total Marks</th><th>Sections</th><th>Date</th><th>Status</th><th>Actions</th></tr>
                     </thead>
                     <tbody id="existing-exams-tbody"></tbody>
                 </table>
@@ -241,6 +245,9 @@
                         <label for="exam-filter-search">Search Exam</label>
                         <input type="text" id="exam-filter-search" placeholder="Exam Name..." onkeyup="loadMyExams()">
                     </div>
+                    <div class="form-group" style="flex: 0; min-width: auto; display: flex; align-items: flex-end;">
+                        <button onclick="toggleArchivedExams()" id="toggle-archived-btn" class="submit-btn btn-secondary" style="height: 42px; white-space: nowrap;">View Archived</button>
+                    </div>
                 </div>
 
                 <table id="my-exams-table">
@@ -269,6 +276,9 @@
                     <div class="form-group" style="min-width: 200px;">
                         <label for="result-filter-search">Search</label>
                         <input type="text" id="result-filter-search" placeholder="Student Name or USN..." onkeyup="loadTeacherResults()">
+                    </div>
+                    <div class="form-group" style="flex: 0; min-width: auto; display: flex; align-items: flex-end;">
+                        <button onclick="exportResultsPDF()" class="submit-btn" style="background-color: #dc3545; height: 42px;">Export PDF</button>
                     </div>
                 </div>
 
@@ -315,6 +325,9 @@
                             <option value="">All Sections</option>
                         </select>
                     </div>
+                    <div class="form-group" style="flex: 0; min-width: auto; display: flex; align-items: flex-end;">
+                        <button onclick="exportLogsCSV()" class="submit-btn" style="background-color: #17a2b8; height: 42px;">Export CSV</button>
+                    </div>
                 </div>
 
                 <table id="teacher-activity-logs-table">
@@ -328,12 +341,21 @@
             <div id="violations-section" class="form-container">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e9ecef; margin-bottom: 20px; padding-bottom: 10px;">
                     <h3 class="section-title" style="margin: 0; border: none; padding: 0;">Exam Violations</h3>
-                    <select id="teacher-violation-filter-status" onchange="loadTeacherViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
-                        <option value="">All Statuses</option>
-                        <option value="Pending">Pending</option>
-                        <option value="Resolved">Resolved</option>
-                        <option value="Dismissed">Dismissed</option>
-                    </select>
+                    <div style="display: flex; gap: 10px;">
+                        <select id="teacher-violation-filter-exam" onchange="loadTeacherViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da; max-width: 200px;"><option value="">All Exams</option></select>
+                        <select id="teacher-violation-filter-status" onchange="loadTeacherViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
+                            <option value="">All Statuses</option>
+                            <option value="Pending">Pending</option>
+                            <option value="Resolved">Resolved</option>
+                            <option value="Dismissed">Dismissed</option>
+                        </select>
+                        <select id="teacher-violation-filter-type" onchange="loadTeacherViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
+                            <option value="">All Types</option>
+                            <option value="TAB_SWITCH">Tab Switch</option>
+                            <option value="MOBILE_DETECTED">Mobile Detected</option>
+                            <option value="FOCUS_LOSS">Focus Loss</option>
+                        </select>
+                    </div>
                 </div>
                 
                 <!-- Summary Cards -->
@@ -355,6 +377,30 @@
                         </tr></thead>
                         <tbody id="teacher-recent-violations-body"></tbody>
                     </table>
+                </div>
+
+                <!-- Violation History Table -->
+                <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; margin-top: 30px;">
+                    <div style="padding: 15px 20px; background: #f8f9fa; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-weight: 600; color: #2c3e50;">Violation History (Resolved/Dismissed)</span>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+                            <input type="date" id="history-filter-start-date" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px;">
+                            <input type="date" id="history-filter-end-date" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px;">
+                            <select id="history-filter-type" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px;">
+                                <option value="">All Types</option>
+                                <option value="TAB_SWITCH">Tab Switch</option>
+                                <option value="MOBILE_DETECTED">Mobile Detected</option>
+                                <option value="FOCUS_LOSS">Focus Loss</option>
+                            </select>
+                            <select id="history-filter-status" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem;"><option value="">All Statuses</option><option value="Resolved">Resolved</option><option value="Dismissed">Dismissed</option></select>
+                            <input type="text" id="history-filter-search" placeholder="Name, USN, Type..." onkeyup="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem;">
+                        </div>
+                    </div>
+                    <table id="violation-history-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                        <thead><tr><th>Student</th><th>Exam</th><th>Violation</th><th>Status</th><th>Time</th><th>Remarks</th><th>Action</th></tr></thead>
+                        <tbody id="violation-history-body"></tbody>
+                    </table>
+                    <div id="history-pagination" style="padding: 10px; display: flex; justify-content: center; gap: 5px;"></div>
                 </div>
             </div>
 
@@ -394,6 +440,79 @@
                         <textarea id="violation-remarks" placeholder="Enter remarks (optional)..." style="width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px; min-height: 60px;"></textarea>
                         <button onclick="resolveViolation('Dismissed')" class="submit-btn btn-secondary">Dismiss</button>
                         <button onclick="resolveViolation('Resolved')" class="submit-btn">Confirm</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Re-Exam Modal -->
+            <div id="re-exam-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close-btn" onclick="closeReExamModal()">&times;</span>
+                    <h3>Schedule Re-Exam</h3>
+                    <input type="hidden" id="re-exam-id">
+                    
+                    <div class="form-group">
+                        <label>Re-Exam Type</label>
+                        <select id="re-exam-type" onchange="toggleReExamType()">
+                            <option value="students">Specific Students</option>
+                            <option value="class">Entire Class (New Instance)</option>
+                        </select>
+                    </div>
+
+                    <div id="re-exam-students-container" class="form-group">
+                        <label>Select Students (Hold Ctrl/Cmd)</label>
+                        <select id="re-exam-students" multiple style="height: 150px;"></select>
+                    </div>
+
+                    <div class="form-group"><label>Date & Time</label><input type="datetime-local" id="re-exam-date" required></div>
+                    <div class="form-group"><label>Duration (Minutes)</label><input type="number" id="re-exam-duration" required></div>
+
+                    <button onclick="submitReExam()" class="submit-btn" style="width: 100%; margin-top: 15px;">Schedule Re-Exam</button>
+                </div>
+            </div>
+
+            <!-- 10. Monitor Exam Section -->
+            <div id="monitor-section" class="form-container">
+                <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                    <h3 class="section-title" style="margin: 0; border: none; padding: 0;">Live Monitor: <span id="monitor-exam-name"></span></h3>
+                    <button onclick="showSection('my-exams')" class="submit-btn btn-secondary" style="height: 38px;">&larr; Back</button>
+                </div>
+
+                <div class="dashboard-grid" id="monitor-stats-cards" style="margin-bottom: 30px;">
+                    <!-- Populated by JS -->
+                </div>
+
+                <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                    <div style="padding: 15px 20px; background: #f8f9fa; border-bottom: 1px solid #eee; font-weight: 600; color: #2c3e50;">Student Status</div>
+                    <table id="monitor-students-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                        <thead><tr><th>Student</th><th>USN</th><th>Status</th><th>Violations</th></tr></thead>
+                        <tbody id="monitor-students-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 11. Exam Analytics Section -->
+            <div id="analytics-section" class="form-container">
+                <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                    <h3 class="section-title" style="margin: 0; border: none; padding: 0;">Analytics: <span id="analytics-exam-name"></span></h3>
+                    <button onclick="showSection('my-exams')" class="submit-btn btn-secondary" style="height: 38px;">&larr; Back</button>
+                </div>
+
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; margin-bottom: 30px; flex-wrap: wrap;">
+                    <div class="card-box" style="flex: 1; min-width: 300px; background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <h4 style="margin-top: 0; color: #2c3e50;">Score Distribution</h4>
+                        <canvas id="scoreDistChart" style="max-height: 250px;"></canvas>
+                    </div>
+                    <div class="card-box" style="flex: 1; min-width: 300px; background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <h4 style="margin-top: 0; color: #2c3e50;">Pass vs Fail</h4>
+                        <canvas id="passFailChart" style="max-height: 250px;"></canvas>
+                    </div>
+                </div>
+
+                <div class="card-box" style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <h4 style="margin-top: 0; color: #2c3e50; margin-bottom: 15px;">Question Difficulty Analysis</h4>
+                    <div id="question-difficulty-container">
+                        <!-- Populated by JS -->
                     </div>
                 </div>
             </div>

@@ -30,6 +30,7 @@ function showSection(sectionName) {
     if (sectionName === 'departments') loadDepartments();
     if (sectionName === 'admins') loadAdmins();
     if (sectionName === 'logs') loadSystemLogs();
+    if (sectionName === 'violations') loadViolationAnalytics();
 }
 
 async function loadDashboardStats() {
@@ -45,10 +46,6 @@ async function loadDashboardStats() {
             <div class="sa-stat-card">
                 <div class="icon admins"><i class="fas fa-user-shield"></i></div>
                 <div class="info"><div class="value">${stats.total_admins}</div><div class="label">Admins</div></div>
-            </div>
-            <div class="sa-stat-card">
-                <div class="icon active-admins"><i class="fas fa-user-check"></i></div>
-                <div class="info"><div class="value">${stats.active_admins}</div><div class="label">Active Admins</div></div>
             </div>
             <div class="sa-stat-card">
                 <div class="icon health"><i class="fas fa-heartbeat"></i></div>
@@ -99,9 +96,7 @@ async function loadAdmins() {
                 <td><strong>${a.name}</strong></td>
                 <td>${a.email}</td>
                 <td>${a.department_name}</td>
-                <td><span class="status-badge ${a.is_active ? 'active' : 'inactive'}">${a.is_active ? 'Active' : 'Inactive'}</span></td>
                 <td class="actions">
-                    <button class="btn-action" onclick="toggleAdminStatus(${a.admin_id}, ${!a.is_active})">${a.is_active ? 'Disable' : 'Enable'}</button>
                     <button class="btn-action" onclick="openResetPasswordModal(${a.admin_id}, '${a.name}')">Reset Pass</button>
                 </td>
             </tr>
@@ -166,18 +161,6 @@ async function handleResetPassword(event) {
         const result = await apiRequest(`/superadmin/admins/${id}/password`, 'PUT', { password });
         alert(result.message);
         closeModal('reset-password-modal');
-    } catch (error) {
-        alert(`Error: ${error.message}`);
-    }
-}
-
-async function toggleAdminStatus(adminId, newStatus) {
-    const action = newStatus ? 'enable' : 'disable';
-    if (!confirm(`Are you sure you want to ${action} this admin account?`)) return;
-    try {
-        const result = await apiRequest(`/superadmin/admins/${adminId}/status`, 'PUT', { is_active: newStatus });
-        alert(result.message);
-        loadAdmins();
     } catch (error) {
         alert(`Error: ${error.message}`);
     }
@@ -305,4 +288,184 @@ async function loadSystemLogs(page = 1) {
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">Error loading logs: ${error.message}</td></tr>`;
     }
+}
+
+async function loadViolationAnalytics() {
+    const container = document.getElementById('violation-summary-cards');
+    container.innerHTML = '<div class="spinner"></div>';
+    loadViolationHistory();
+    const status = document.getElementById('sa-violation-filter-status').value;
+    
+    try {
+        let url = '/superadmin/violations/stats';
+        if (status) url += `?status=${status}`;
+        const stats = await apiRequest(url);
+        
+        // 1. Summary Cards
+        container.innerHTML = `
+            <div class="sa-stat-card">
+                <div class="icon" style="background:#FEE2E2; color:#DC2626;"><i class="fas fa-exclamation-circle"></i></div>
+                <div class="info"><div class="value">${stats.today}</div><div class="label">Violations Today</div></div>
+            </div>
+            <div class="sa-stat-card">
+                <div class="icon" style="background:#FFEDD5; color:#D97706;"><i class="fas fa-calendar-week"></i></div>
+                <div class="info"><div class="value">${stats.week}</div><div class="label">Violations This Week</div></div>
+            </div>
+            <div class="sa-stat-card">
+                <div class="icon" style="background:#E0E7FF; color:#4F46E5;"><i class="fas fa-user-tag"></i></div>
+                <div class="info"><div class="value">${stats.students_flagged}</div><div class="label">Students Flagged</div></div>
+            </div>
+            <div class="sa-stat-card">
+                <div class="icon" style="background:#F3F4F6; color:#4B5563;"><i class="fas fa-file-contract"></i></div>
+                <div class="info"><div class="value">${stats.exams_affected}</div><div class="label">Exams Affected</div></div>
+            </div>
+        `;
+
+        // 2. Charts
+        renderViolationTrendChart(stats.trend);
+        renderViolationDeptChart(stats.by_dept);
+        renderViolationTypeChart(stats.by_type);
+
+        // 3. Alerts
+        const alertsContainer = document.getElementById('violation-alerts-container');
+        let alertsHtml = '';
+        if (stats.today > 5) alertsHtml += `<div class="activity-item violation"><div class="act-icon"><i class="fas fa-exclamation"></i></div><div class="act-content"><strong>High Violation Rate</strong><br>${stats.today} violations recorded today.</div></div>`;
+        
+        if (!alertsHtml) alertsHtml = '<p style="color:#666; padding:10px;">No critical alerts at this moment.</p>';
+        alertsContainer.innerHTML = alertsHtml;
+
+        // 4. Recent Violations Table
+        const recentBody = document.getElementById('recent-violations-full-body');
+        recentBody.innerHTML = stats.recent.map(v => `
+            <tr>
+                <td><strong>${v.student_name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
+                <td><span class="dept-badge">${v.department_name}</span></td>
+                <td>${v.exam_name}</td>
+                <td><span style="color:#DC2626; font-weight:500;">${v.violation_type}</span></td>
+                <td><span class="status-badge" style="
+                    background-color: ${v.review_status === 'Resolved' ? '#DCFCE7' : v.review_status === 'Dismissed' ? '#F1F5F9' : '#FEF2F2'};
+                    color: ${v.review_status === 'Resolved' ? '#16A34A' : v.review_status === 'Dismissed' ? '#64748B' : '#DC2626'};
+                    padding: 4px 8px; border-radius: 12px; font-size: 0.75rem;
+                ">
+                    ${v.review_status}
+                </span></td>
+                <td>${new Date(v.timestamp).toLocaleTimeString()}</td>
+            </tr>
+        `).join('');
+
+        // 5. High Risk Students
+        const riskBody = document.getElementById('high-risk-students-body');
+        riskBody.innerHTML = stats.high_risk.map(s => `
+            <tr>
+                <td><strong>${s.name}</strong> <br><span style="font-size:0.8em; color:#666;">${s.department_name}</span></td>
+                <td><span class="status-badge inactive" style="background:#FEE2E2; color:#DC2626;">${s.violation_count} Violations</span></td>
+            </tr>
+        `).join('');
+
+    } catch (error) {
+        console.error("Failed to load violation stats", error);
+        container.innerHTML = '<p style="color:red">Error loading data.</p>';
+    }
+}
+
+async function loadViolationHistory(page = 1) {
+    const tbody = document.getElementById('violation-history-body');
+    const pagination = document.getElementById('history-pagination');
+    if (!tbody) return;
+    
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>';
+    const status = document.getElementById('history-filter-status').value;
+    const search = document.getElementById('history-filter-search').value;
+
+    try {
+        const queryParams = new URLSearchParams({ page, limit: 10 });
+        if (status) queryParams.append('status', status);
+        if (search) queryParams.append('search', search);
+
+        const data = await apiRequest(`/superadmin/violations/history?${queryParams.toString()}`);
+        
+        if (data.history.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No history found.</td></tr>';
+            pagination.innerHTML = '';
+            return;
+        }
+
+        tbody.innerHTML = data.history.map(v => `
+            <tr>
+                <td><strong>${v.student_name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
+                <td><span class="dept-badge">${v.department_name}</span></td>
+                <td>${v.exam_name}</td>
+                <td><span style="color:#DC2626;">${v.violation_type}</span></td>
+                <td><span class="status-badge ${v.review_status === 'Resolved' ? 'active' : 'inactive'}">${v.review_status}</span></td>
+                <td>${new Date(v.timestamp).toLocaleString()}</td>
+                <td><small>${v.admin_remarks || '-'}</small></td>
+            </tr>
+        `).join('');
+
+        pagination.innerHTML = `<button onclick="loadViolationHistory(${page-1})" ${page===1?'disabled':''}>&laquo;</button> <span style="padding:5px;">Page ${page}</span> <button onclick="loadViolationHistory(${page+1})" ${page===data.total_pages?'disabled':''}>&raquo;</button>`;
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="7" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
+    }
+}
+
+let vTrendChart = null;
+function renderViolationTrendChart(data) {
+    const ctx = document.getElementById('violationTrendChart');
+    if (!ctx) return;
+    if (vTrendChart) vTrendChart.destroy();
+
+    vTrendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => new Date(d.date).toLocaleDateString(undefined, {weekday:'short'})),
+            datasets: [{
+                label: 'Violations',
+                data: data.map(d => d.count),
+                borderColor: '#DC2626',
+                backgroundColor: 'rgba(220, 38, 38, 0.1)',
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+    });
+}
+
+let vDeptChart = null;
+function renderViolationDeptChart(data) {
+    const ctx = document.getElementById('violationDeptChart');
+    if (!ctx) return;
+    if (vDeptChart) vDeptChart.destroy();
+
+    vDeptChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.department_name),
+            datasets: [{
+                label: 'Violations',
+                data: data.map(d => d.count),
+                backgroundColor: '#F59E0B'
+            }]
+        },
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+    });
+}
+
+let vTypeChart = null;
+function renderViolationTypeChart(data) {
+    const ctx = document.getElementById('violationTypeChart');
+    if (!ctx) return;
+    if (vTypeChart) vTypeChart.destroy();
+
+    vTypeChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: data.map(d => d.violation_type),
+            datasets: [{
+                data: data.map(d => d.count),
+                backgroundColor: ['#EF4444', '#F59E0B', '#3B82F6', '#10B981', '#6366F1']
+            }]
+        },
+        options: { responsive: true, plugins: { legend: { position: 'right' } } }
+    });
 }

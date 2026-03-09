@@ -54,7 +54,7 @@ def record_violation(
                 question_id,
                 violation_type,
                 confidence_score,
-                timestamp,
+                detected_at,
                 review_status
             )
             VALUES (%s, %s, %s, %s, %s, %s, 'Pending')

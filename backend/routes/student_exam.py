@@ -38,6 +38,14 @@ def get_student_exams(user=Depends(get_current_user)):
     cursor = conn.cursor(dictionary=True)
 
     try:
+        # Auto-update status for expired exams
+        cursor.execute("""
+            UPDATE exam 
+            SET status = 'completed' 
+            WHERE status != 'completed' AND NOW() > DATE_ADD(date, INTERVAL duration MINUTE)
+        """)
+        conn.commit()
+
         # 🔍 Get student's section
         cursor.execute(
             "SELECT section_id FROM student WHERE student_id = %s",
@@ -60,6 +68,7 @@ def get_student_exams(user=Depends(get_current_user)):
             FROM exam e
             JOIN exam_section es ON e.exam_id = es.exam_id
             WHERE es.section_id = %s
+            AND (e.is_archived = 0 OR e.is_archived IS NULL)
             ORDER BY e.date DESC
             """,
             (section_id,),

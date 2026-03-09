@@ -13,18 +13,65 @@ async function loadUserProfile() {
     }
 }
 
+let navHistory = [];
+let isNavigatingBack = false;
+
 function showSection(sectionName) {
+    // Capture active section for history
+    const activeSection = document.querySelector('.form-container.active');
+    if (activeSection && !isNavigatingBack) {
+        const activeId = activeSection.id.replace('-section', '');
+        if (activeId !== sectionName) {
+            navHistory.push(activeId);
+        }
+    }
+    isNavigatingBack = false;
+
     document.querySelectorAll('.form-container').forEach(div => div.classList.remove('active'));
     document.querySelectorAll('.sidebar button').forEach(btn => btn.classList.remove('active'));
     
     document.getElementById(`${sectionName}-section`).classList.add('active');
     document.querySelector(`.sidebar button[data-section="${sectionName}"]`).classList.add('active');
 
+    updateBreadcrumb(sectionName);
+
     if (sectionName === 'dashboard') loadDashboardStats();
     if (sectionName === 'upcoming') loadUpcomingExams();
     if (sectionName === 'history') loadExamHistory();
     if (sectionName === 'academic') loadAcademicInfo();
     if (sectionName === 'violations') loadViolations();
+}
+
+function goBack() {
+    if (navHistory.length === 0) return;
+    const prevSection = navHistory.pop();
+    isNavigatingBack = true;
+    showSection(prevSection);
+}
+
+function updateBreadcrumb(section) {
+    const breadcrumb = document.getElementById('breadcrumb');
+    if (!breadcrumb) return;
+
+    const sectionNames = {
+        'dashboard': 'Dashboard',
+        'upcoming': 'Upcoming Exams',
+        'history': 'Exam History',
+        'academic': 'Academic Profile',
+        'violations': 'Violations'
+    };
+
+    const name = sectionNames[section] || section.charAt(0).toUpperCase() + section.slice(1);
+    
+    const backButtonHtml = navHistory.length > 0 
+        ? `<button class="back-btn" onclick="goBack()" title="Go Back"><i class="fas fa-arrow-left"></i></button>` 
+        : '';
+
+    breadcrumb.innerHTML = `
+        <   <span class="separator">/</span>
+            <span class="current">${name}</span>
+        </div>
+    `;
 }
 
 async function loadDashboardStats() {
@@ -45,12 +92,12 @@ async function loadDashboardStats() {
                 <div class="stat-label">Completed</div>
                 <div class="stat-icon">✅</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card" onclick="showSection('history')">
                 <div class="stat-value">${stats.average_score}%</div>
                 <div class="stat-label">Average Score</div>
                 <div class="stat-icon">📊</div>
             </div>
-            <div class="stat-card" style="border-bottom: 4px solid ${stats.violations > 0 ? '#dc3545' : '#28a745'};">
+            <div class="stat-card" onclick="showSection('violations')" style="border-bottom: 4px solid ${stats.violations > 0 ? '#dc3545' : '#28a745'};">
                 <div class="stat-value" style="color: ${stats.violations > 0 ? '#dc3545' : '#28a745'};">${stats.violations}</div>
                 <div class="stat-label">Violations</div>
                 <div class="stat-icon">⚠️</div>
@@ -66,7 +113,7 @@ async function loadDashboardStats() {
             if (stats.recent_results.length === 0) {
                 resultsBody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">No recent results.</td></tr>';
             } else {
-                resultsBody.innerHTML = stats.recent_results.map(r => `
+                resultsBody.innerHTML = stats.recent_results.slice(0, 5).map(r => `
                     <tr>
                         <td><strong>${r.exam_name}</strong></td>
                         <td>${r.subject_name}</td>

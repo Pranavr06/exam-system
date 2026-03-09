@@ -34,6 +34,8 @@
         </header>
 
         <div class="main-scrollable-content">
+            <div id="breadcrumb" class="breadcrumb"></div>
+
             <!-- 1. Dashboard Overview -->
             <div id="dashboard-section" class="form-container active" style="background: transparent; border: none; box-shadow: none; padding: 0;">
                 <div class="sa-dashboard-grid" id="sa-stats-container">
@@ -109,6 +111,7 @@
                              <div class="sa-card-header"><h3 class="sa-card-title" style="color: #DC2626;">Recent Violations</h3></div>
                              <div id="recent-violations-list" class="activity-feed"></div>
                          </div>
+                         <div class="sa-card" style="margin-top: 0;" id="dept-health-card"></div>
                     </div>
 
                     <!-- Right Column: System Activity & Health -->
@@ -117,7 +120,19 @@
                             <div class="sa-card-header"><h3 class="sa-card-title">System Activity Feed</h3></div>
                             <div id="system-activity-feed" class="activity-feed" style="max-height: 600px;"></div>
                         </div>
-                        <div class="sa-card" style="margin-top: 0;" id="dept-health-card"></div>
+                        
+                        <!-- System Health -->
+                        <div class="sa-card" style="margin-top: 0;">
+                            <div class="sa-card-header"><h3 class="sa-card-title">System Health</h3></div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.9rem; color: #334155;">
+                                <span>Database Connection</span>
+                                <span id="health-db-status" style="color: #64748B; font-weight: bold;">● Checking...</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 0.9rem; color: #334155;">
+                                <span>Server Status</span>
+                                <span id="health-server-status" style="color: #64748B; font-weight: bold;">● Checking...</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -166,7 +181,7 @@
                         <h3 class="sa-card-title">Manage Department Admins</h3>
                     </div>
                     <table class="sa-table" id="admins-table">
-                        <thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Status</th><th>Actions</th></tr></thead>
+                        <thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Actions</th></tr></thead>
                         <tbody id="admins-table-body"></tbody>
                     </table>
                 </div>
@@ -235,12 +250,21 @@
             <div id="violations-section" class="form-container">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e9ecef; margin-bottom: 20px; padding-bottom: 10px;">
                     <h3 class="section-title" style="margin: 0; border: none; padding: 0;">Exam Integrity & Violation Monitoring</h3>
-                    <select id="sa-violation-filter-status" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
-                        <option value="">All Statuses</option>
-                        <option value="Pending">Pending</option>
-                        <option value="Resolved">Resolved</option>
-                        <option value="Dismissed">Dismissed</option>
-                    </select>
+                    <div style="display: flex; gap: 10px;">
+                        <select id="sa-violation-filter-exam" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da; max-width: 200px;"><option value="">All Exams</option></select>
+                        <select id="sa-violation-filter-status" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
+                            <option value="">All Statuses</option>
+                            <option value="Pending">Pending</option>
+                            <option value="Resolved">Resolved</option>
+                            <option value="Dismissed">Dismissed</option>
+                        </select>
+                        <select id="sa-violation-filter-type" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
+                            <option value="">All Types</option>
+                            <option value="TAB_SWITCH">Tab Switch</option>
+                            <option value="MOBILE_DETECTED">Mobile Detected</option>
+                            <option value="FOCUS_LOSS">Focus Loss</option>
+                        </select>
+                    </div>
                 </div>
                 
                 <!-- Summary Cards -->
@@ -289,12 +313,45 @@
                         </table>
                     </div>
                 </div>
+
+                <!-- Violation History Table -->
+                <div class="sa-card" style="margin-top: 30px;">
+                    <div class="sa-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h3 class="sa-card-title">Violation History</h3>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+                            <input type="date" id="history-filter-start-date" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px;">
+                            <input type="date" id="history-filter-end-date" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px;">
+                            <select id="history-filter-type" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px;">
+                                <option value="">All Types</option>
+                                <option value="TAB_SWITCH">Tab Switch</option>
+                                <option value="MOBILE_DETECTED">Mobile Detected</option>
+                                <option value="FOCUS_LOSS">Focus Loss</option>
+                            </select>
+                            <select id="history-filter-status" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem;">
+                                <option value="">All Statuses</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Under_Review">Under Review</option>
+                                <option value="Resolved">Resolved</option>
+                                <option value="Dismissed">Dismissed</option>
+                            </select>
+                            <input type="text" id="history-filter-search" placeholder="Name, USN, Type..." onkeyup="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem;">
+                        </div>
+                    </div>
+                    <table class="sa-table" id="violation-history-table">
+                        <thead><tr><th>Student</th><th>Dept</th><th>Exam</th><th>Violation</th><th>Status</th><th>Time</th><th>Remarks</th></tr></thead>
+                        <tbody id="violation-history-body"></tbody>
+                    </table>
+                    <div id="history-pagination" style="padding: 10px; display: flex; justify-content: center; gap: 5px;"></div>
+                </div>
             </div>
 
             <!-- 5. Global Exam Monitoring -->
             <div id="exams-section" class="form-container">
                 <div class="sa-card">
-                    <div class="sa-card-header"><h3 class="sa-card-title">Global Exam Monitoring</h3></div>
+                    <div class="sa-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h3 id="global-exams-header" class="sa-card-title">Global Exam Monitoring</h3>
+                        <button onclick="cleanupArchivedExams()" class="submit-btn" style="background-color: #DC2626; height: 32px; padding: 0 15px; font-size: 0.85rem;">Cleanup Old Archives</button>
+                    </div>
                     <!-- Filters -->
                     <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
                         <div class="form-group" style="min-width: 150px;"><label for="exam-filter-dept">Department</label><select id="exam-filter-dept" onchange="loadAllExams()"><option value="">All</option></select></div>
@@ -305,6 +362,9 @@
                             </select>
                         </div>
                         <div class="form-group" style="min-width: 200px;"><label for="exam-filter-search">Search</label><input type="text" id="exam-filter-search" placeholder="Exam or Subject..." onkeyup="loadAllExams()"></div>
+                        <div class="form-group" style="flex: 0; min-width: auto; display: flex; align-items: flex-end;">
+                            <button onclick="toggleArchivedExams()" id="toggle-archived-btn" class="submit-btn btn-secondary" style="height: 42px; white-space: nowrap;">View Archived</button>
+                        </div>
                     </div>
                     <table class="sa-table" id="all-exams-table">
                         <thead><tr><th>Exam Name</th><th>Department</th><th>Subject</th><th>Batch/Sem</th><th>Created By</th><th>Status</th><th>Date</th></tr></thead>
@@ -323,6 +383,9 @@
                         <div class="form-group" style="min-width: 150px;"><label for="log-end-date">End Date</label><input type="date" id="log-end-date" onchange="loadSystemLogs()"></div>
                         <div class="form-group" style="min-width: 150px;"><label for="log-action-type">Action Type</label><select id="log-action-type" onchange="loadSystemLogs()"><option value="">All</option><option value="Create">Create</option><option value="Update">Update</option><option value="Delete">Delete</option><option value="Publish">Publish</option></select></div>
                         <div class="form-group" style="min-width: 200px;"><label for="log-search">Search Logs</label><input type="text" id="log-search" placeholder="Search action or entity..." onkeyup="loadSystemLogs()"></div>
+                        <div class="form-group" style="flex: 0; min-width: auto; display: flex; align-items: flex-end;">
+                            <button onclick="exportLogsCSV()" class="submit-btn" style="background-color: #17a2b8; height: 42px;">Export CSV</button>
+                        </div>
                     </div>
                     <table id="system-logs-table">
                         <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Entity</th><th>IP Address</th></tr></thead>
@@ -337,20 +400,22 @@
     <!-- Modals -->
     <div id="sa-modal-container">
 
-        <!-- Reset Password Modal -->
-        <div id="reset-password-modal" class="sa-modal">
+        <!-- Replace Admin Modal -->
+        <div id="replace-admin-modal" class="sa-modal">
             <div class="sa-modal-content">
                 <div class="sa-modal-header">
-                    <h3 class="sa-modal-title">Reset Admin Password</h3>
-                    <button class="sa-modal-close" onclick="closeModal('reset-password-modal')">&times;</button>
+                    <h3 class="sa-modal-title">Replace Admin</h3>
+                    <button class="sa-modal-close" onclick="closeModal('replace-admin-modal')">&times;</button>
                 </div>
-                <form id="reset-password-form">
-                    <input type="hidden" name="admin_id">
-                    <p>Enter a new password for <strong id="reset-admin-name"></strong>.</p>
-                    <div class="form-group"><label for="reset-password-input">New Password</label><input id="reset-password-input" type="password" name="password" required></div>
+                <form id="replace-admin-form">
+                    <input type="hidden" name="current_admin_id">
+                    <p style="margin-bottom: 15px; color: #666;">This will create a new admin and transfer all department data (Exams, Teachers, Students) from <strong id="replace-current-name"></strong> to the new admin, then delete the old account.</p>
+                    <div class="form-group"><label>New Admin Name</label><input type="text" name="new_name" required></div>
+                    <div class="form-group"><label>New Admin Email</label><input type="email" name="new_email" required></div>
+                    <div class="form-group"><label>New Password</label><input type="password" name="new_password" required></div>
                     <div class="form-actions" style="justify-content: flex-end; margin-top: 20px;">
-                        <button type="button" class="submit-btn btn-secondary" onclick="closeModal('reset-password-modal')">Cancel</button>
-                        <button type="submit" class="submit-btn">Reset Password</button>
+                        <button type="button" class="submit-btn btn-secondary" onclick="closeModal('replace-admin-modal')">Cancel</button>
+                        <button type="submit" class="submit-btn" style="background-color: #D97706;">Replace Admin</button>
                     </div>
                 </form>
             </div>

@@ -12,6 +12,14 @@ def get_student_dashboard_stats(user=Depends(get_current_user)):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        # Auto-update status for expired exams
+        cursor.execute("""
+            UPDATE exam 
+            SET status = 'completed' 
+            WHERE status != 'completed' AND NOW() > DATE_ADD(date, INTERVAL duration MINUTE)
+        """)
+        conn.commit()
+
         student_id = user["user_id"]
         
         # Get Section ID
@@ -37,15 +45,26 @@ def get_student_dashboard_stats(user=Depends(get_current_user)):
             LEFT JOIN attempt a ON e.exam_id = a.exam_id AND a.student_id = %s
             WHERE es.section_id = %s 
             AND e.status IN ('scheduled', 'active')
+            AND NOW() <= (e.date + INTERVAL e.duration MINUTE)
+            AND (e.is_archived = 0 OR e.is_archived IS NULL)
             AND (a.attempt_id IS NULL OR a.status = 'IN_PROGRESS')
         """, (student_id, section_id))
         upcoming_count = cursor.fetchone()["count"]
 
+        # Add Retake Exams Count
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM exam_retake 
+            WHERE student_id = %s AND status IN ('scheduled', 'active')
+            AND NOW() <= (retake_date + INTERVAL retake_duration MINUTE)
+        """, (student_id,))
+        upcoming_count += cursor.fetchone()["count"]
+
         # 2. Completed Exams
         cursor.execute("""
             SELECT COUNT(*) as count
-            FROM attempt
-            WHERE student_id = %s AND status = 'COMPLETED'
+            FROM attempt a
+            JOIN exam e ON a.exam_id = e.exam_id
+            WHERE a.student_id = %s AND a.status = 'COMPLETED' AND (e.is_archived = 0 OR e.is_archived IS NULL)
         """, (student_id,))
         completed_count = cursor.fetchone()["count"]
 
@@ -54,12 +73,17 @@ def get_student_dashboard_stats(user=Depends(get_current_user)):
             SELECT AVG((r.total_marks / e.total_marks) * 100) as avg_score
             FROM result r
             JOIN exam e ON r.exam_id = e.exam_id
-            WHERE r.student_id = %s
+            WHERE r.student_id = %s AND (e.is_archived = 0 OR e.is_archived IS NULL)
         """, (student_id,))
         avg_score = cursor.fetchone()["avg_score"] or 0
 
         # 4. Violations
-        cursor.execute("SELECT COUNT(*) as count FROM violation WHERE student_id = %s", (student_id,))
+        cursor.execute("""
+            SELECT COUNT(v.violation_id) as count 
+            FROM violation v
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE v.student_id = %s AND (e.is_archived = 0 OR e.is_archived IS NULL)
+        """, (student_id,))
         violations_count = cursor.fetchone()["count"]
 
         # 5. Performance Data
@@ -68,7 +92,7 @@ def get_student_dashboard_stats(user=Depends(get_current_user)):
             FROM result r
             JOIN exam e ON r.exam_id = e.exam_id
             JOIN subject s ON e.subject_id = s.subject_id
-            WHERE r.student_id = %s
+            WHERE r.student_id = %s AND (e.is_archived = 0 OR e.is_archived IS NULL)
             GROUP BY s.subject_id
         """, (student_id,))
         performance_data = cursor.fetchall()
@@ -80,7 +104,7 @@ def get_student_dashboard_stats(user=Depends(get_current_user)):
             FROM result r
             JOIN exam e ON r.exam_id = e.exam_id
             JOIN subject s ON e.subject_id = s.subject_id
-            WHERE r.student_id = %s
+            WHERE r.student_id = %s AND (e.is_archived = 0 OR e.is_archived IS NULL)
             ORDER BY r.generated_time DESC
             LIMIT 5
         """, (student_id,))
@@ -118,7 +142,8 @@ def get_student_upcoming_exams(user=Depends(get_current_user)):
                    CASE
                        WHEN e.status = 'completed' THEN 'completed'
                        WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
-                       ELSE e.status
+                       WHEN e.status = 'active' AND NOW() >= e.date THEN 'active'
+                       ELSE 'scheduled'
                    END as status, e.total_marks,
                    a.status as attempt_status
             FROM exam e
@@ -126,11 +151,26 @@ def get_student_upcoming_exams(user=Depends(get_current_user)):
             JOIN subject s ON e.subject_id = s.subject_id
             LEFT JOIN attempt a ON e.exam_id = a.exam_id AND a.student_id = %s
             WHERE es.section_id = %s 
+            AND (e.is_archived = 0 OR e.is_archived IS NULL)
             AND (a.attempt_id IS NULL OR a.status = 'IN_PROGRESS')
             HAVING status IN ('scheduled', 'active')
             ORDER BY e.date ASC
         """, (user["user_id"], section_id))
-        return cursor.fetchall()
+        exams = cursor.fetchall()
+
+        # Fetch Specific Retakes
+        cursor.execute("""
+            SELECT er.retake_id, e.exam_id, CONCAT('Retake: ', e.exam_name) as exam_name, s.subject_name, 
+                   er.retake_date as date, er.retake_duration as duration, 
+                   er.status, e.total_marks, 'PENDING' as attempt_status, 'true' as is_specific_retake
+            FROM exam_retake er
+            JOIN exam e ON er.exam_id = e.exam_id
+            JOIN subject s ON e.subject_id = s.subject_id
+            WHERE er.student_id = %s AND er.status IN ('scheduled', 'active')
+        """, (user["user_id"],))
+        retakes = cursor.fetchall()
+
+        return exams + retakes
     finally:
         cursor.close()
         conn.close()
@@ -178,7 +218,13 @@ def get_student_violations(user=Depends(get_current_user)):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
-        cursor.execute("SELECT * FROM violation WHERE student_id = %s ORDER BY timestamp DESC", (user["user_id"],))
+        cursor.execute("""
+            SELECT v.*, v.detected_at as timestamp
+            FROM violation v
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE v.student_id = %s AND (e.is_archived = 0 OR e.is_archived IS NULL)
+            ORDER BY v.detected_at DESC
+        """, (user["user_id"],))
         return cursor.fetchall()
     finally:
         cursor.close()
@@ -198,7 +244,7 @@ def get_student_exam_history(user=Depends(get_current_user)):
             FROM result r
             JOIN exam e ON r.exam_id = e.exam_id
             JOIN subject s ON e.subject_id = s.subject_id
-            WHERE r.student_id = %s
+            WHERE r.student_id = %s AND (e.is_archived = 0 OR e.is_archived IS NULL)
             ORDER BY r.generated_time DESC
         """, (user["user_id"],))
         return cursor.fetchall()

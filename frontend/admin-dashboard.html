@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
 
@@ -19,6 +21,7 @@
         <button type="button" data-section="student" onclick="showSection('student')"><i class="fas fa-user-graduate fa-fw"></i> Add Student</button>
         <button type="button" data-section="assignment" onclick="showSection('assignment')"><i class="fas fa-chalkboard fa-fw"></i> Assign Classes</button>
         <button type="button" data-section="exam" onclick="showSection('exam')"><i class="fas fa-file-alt fa-fw"></i> Create Exam</button>
+        <button type="button" data-section="my-exams" onclick="showSection('my-exams')"><i class="fas fa-list-alt fa-fw"></i> My Exams</button>
         <button type="button" data-section="question" onclick="showSection('question')"><i class="fas fa-question-circle fa-fw"></i> Add Questions</button>
         <button type="button" data-section="result" onclick="showSection('result')"><i class="fas fa-poll fa-fw"></i> View Results</button>
         <button type="button" data-section="violations" onclick="showSection('violations')"><i class="fas fa-exclamation-triangle fa-fw"></i> Violations</button>
@@ -38,6 +41,8 @@
         </header>
 
         <div class="main-scrollable-content">
+        <div id="breadcrumb" class="breadcrumb"></div>
+
         <!-- 0. Dashboard Overview -->
         <div id="dashboard-section" class="form-container active" style="background: transparent; border: none; box-shadow: none; padding: 0;">
             <h3 class="section-title">Overview</h3>
@@ -83,19 +88,6 @@
                             <button onclick="showSection('student')" class="btn-quick">➕ Student</button>
                             <button onclick="showSection('subject')" class="btn-quick">➕ Subject</button>
                             <button onclick="showSection('exam')" class="btn-quick">➕ Exam</button>
-                        </div>
-                    </div>
-
-                    <!-- System Health -->
-                    <div class="card-box" style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
-                        <h4 style="margin-top: 0; color: #2c3e50; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">System Health</h4>
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.9rem;">
-                            <span>Database Connection</span>
-                            <span style="color: #28a745; font-weight: bold;">● Active</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 0.9rem;">
-                            <span>Server Status</span>
-                            <span style="color: #28a745; font-weight: bold;">● Online</span>
                         </div>
                     </div>
                 </div>
@@ -231,6 +223,7 @@
                 <div class="form-actions">
                     <button type="submit" class="submit-btn">Create Student</button>
                     <button type="button" class="submit-btn btn-secondary" style="display: none;" onclick="resetForm('student')">Cancel</button>
+                    <button type="button" class="submit-btn" style="background-color: #17a2b8;" onclick="openImportModal()">Import CSV</button>
                 </div>
             </form>
 
@@ -352,6 +345,43 @@
             </div>
         </div>
 
+        <!-- 6.5 My Exams Section -->
+        <div id="my-exams-section" class="form-container">
+            <h3 class="section-title">Exam Management</h3>
+            
+            <!-- Filter Bar -->
+            <div class="filters" style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                <div class="form-group" style="min-width: 150px;">
+                    <label for="my-exam-filter-subject">Subject</label>
+                    <select id="my-exam-filter-subject" onchange="loadAdminExams()"><option value="">All Subjects</option></select>
+                </div>
+                <div class="form-group" style="min-width: 150px;">
+                    <label for="my-exam-filter-status">Status</label>
+                    <select id="my-exam-filter-status" onchange="loadAdminExams()"><option value="">All Statuses</option><option value="scheduled">Scheduled</option><option value="active">Active</option><option value="completed">Completed</option></select>
+                </div>
+                <div class="form-group" style="min-width: 200px;">
+                    <label for="my-exam-filter-search">Search Exam</label>
+                    <input type="text" id="my-exam-filter-search" placeholder="Exam Name..." onkeyup="loadAdminExams()">
+                </div>
+                <div class="form-group" style="flex: 0; min-width: auto; display: flex; align-items: flex-end;">
+                    <button onclick="toggleArchivedExams()" id="toggle-archived-btn" class="submit-btn btn-secondary" style="height: 42px; white-space: nowrap;">View Archived</button>
+                </div>
+            </div>
+
+            <h4 id="my-exams-header" style="margin-bottom: 10px; color: #2c3e50; border-bottom: 2px solid #3182ce; padding-bottom: 5px; display: inline-block;">My Created Exams</h4>
+            <table id="my-exams-table">
+                <thead><tr><th>Exam Name</th><th>Subject</th><th>Total Marks</th><th>Sections</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody id="my-exams-tbody"></tbody>
+            </table>
+
+            <h4 id="dept-exams-header" style="margin-top: 40px; margin-bottom: 10px; color: #2c3e50; border-bottom: 2px solid #2c5282; padding-bottom: 5px; display: inline-block;">Department Exams</h4>
+            <p style="font-size: 0.9rem; color: #666; margin-bottom: 15px;">Exams created by teachers in your department.</p>
+            <table id="dept-exams-table">
+                <thead><tr><th>Exam Name</th><th>Subject</th><th>Total Marks</th><th>Sections</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody id="dept-exams-tbody"></tbody>
+            </table>
+        </div>
+
         <!-- 7. Add Questions -->
         <div id="question-section" class="form-container">
             <h3 class="section-title">Add Questions to Exam</h3>
@@ -435,6 +465,7 @@
                 </div>
                 <div class="form-group" style="flex: 0; min-width: auto; display: flex; align-items: flex-end;">
                     <button onclick="exportResults()" class="submit-btn" style="background-color: #17a2b8; height: 42px;">Export CSV</button>
+                    <button onclick="exportResultsPDF()" class="submit-btn" style="background-color: #dc3545; height: 42px; margin-left: 10px;">Export PDF</button>
                 </div>
             </div>
 
@@ -460,12 +491,21 @@
         <div id="violations-section" class="form-container">
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e9ecef; margin-bottom: 20px; padding-bottom: 10px;">
                 <h3 class="section-title" style="margin: 0; border: none; padding: 0;">Department Violation Monitoring</h3>
-                <select id="violation-filter-status" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
-                    <option value="">All Statuses</option>
-                    <option value="Pending">Pending</option>
-                    <option value="Resolved">Resolved</option>
-                    <option value="Dismissed">Dismissed</option>
-                </select>
+                <div style="display: flex; gap: 10px;">
+                    <select id="violation-filter-exam" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da; max-width: 200px;"><option value="">All Exams</option></select>
+                    <select id="violation-filter-status" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
+                        <option value="">All Statuses</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Resolved">Resolved</option>
+                        <option value="Dismissed">Dismissed</option>
+                    </select>
+                    <select id="violation-filter-type" onchange="loadViolationAnalytics()" style="padding: 8px; border-radius: 4px; border: 1px solid #ced4da;">
+                        <option value="">All Types</option>
+                        <option value="TAB_SWITCH">Tab Switch</option>
+                        <option value="MOBILE_DETECTED">Mobile Detected</option>
+                        <option value="FOCUS_LOSS">Focus Loss</option>
+                    </select>
+                </div>
             </div>
             
             <!-- Summary Cards -->
@@ -514,6 +554,31 @@
                     </table>
                 </div>
             </div>
+
+            <!-- Violation History Table -->
+            <div class="card-box" style="background: white; padding: 0; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; margin-top: 30px;">
+                <div style="padding: 15px 20px; background: #f8f9fa; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 600; color: #2c3e50;">Violation History (Resolved/Dismissed)</span>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+                        <input type="date" id="history-filter-start-date" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px;">
+                        <input type="date" id="history-filter-end-date" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px;">
+                        <select id="history-filter-type" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem; border: 1px solid #ced4da; border-radius: 4px;">
+                            <option value="">All Types</option>
+                            <option value="TAB_SWITCH">Tab Switch</option>
+                            <option value="MOBILE_DETECTED">Mobile Detected</option>
+                            <option value="FOCUS_LOSS">Focus Loss</option>
+                        </select>
+                        <select id="history-filter-status" onchange="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem;"><option value="">All Statuses</option><option value="Resolved">Resolved</option><option value="Dismissed">Dismissed</option></select>
+                        <input type="text" id="history-filter-search" placeholder="Name, USN, Type..." onkeyup="loadViolationHistory()" style="padding: 4px; font-size: 0.85rem;">
+                    </div>
+                </div>
+                <table id="violation-history-table" style="margin-top: 0; box-shadow: none; border-radius: 0;">
+                    <thead><tr><th>Student</th><th>Exam</th><th>Violation</th><th>Status</th><th>Time</th><th>Remarks</th><th>Action</th></tr></thead>
+                    <tbody id="violation-history-body"></tbody>
+                    </table>
+                <div id="history-pagination" style="padding: 10px; display: flex; justify-content: center; gap: 5px;"></div>
+                </div>
+            </div>
         </div>
 
         <!-- 9. System Logs -->
@@ -544,12 +609,17 @@
                     <label for="log-search">Search Logs</label>
                     <input type="text" id="log-search" placeholder="Search action or entity..." onkeyup="loadSystemLogs()">
                 </div>
+                <div class="form-group" style="flex: 0; min-width: auto; display: flex; align-items: flex-end;">
+                    <button onclick="exportLogsCSV()" class="submit-btn" style="background-color: #17a2b8; height: 42px;">Export CSV</button>
+                </div>
             </div>
 
-            <table id="system-logs-table">
-                <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Entity</th><th>IP Address</th></tr></thead>
-                <tbody id="system-logs-body"></tbody>
-            </table>
+            <div style="overflow: auto; max-height: 600px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                <table id="system-logs-table" style="min-width: 800px;">
+                    <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Entity</th><th>IP Address</th></tr></thead>
+                    <tbody id="system-logs-body"></tbody>
+                </table>
+            </div>
             <div id="logs-pagination-controls" style="margin-top: 15px; display: flex; justify-content: center; gap: 5px;"></div>
         </div>
         </div>
@@ -568,6 +638,27 @@
             <div class="modal-actions">
                 <button onclick="closeDeleteModal()" class="cancel-btn">Cancel</button>
                 <button onclick="confirmDeleteQuestion()" class="delete-btn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Teacher Modal -->
+    <div id="delete-teacher-modal" class="modal">
+        <div class="modal-content">
+            <h3>Delete Teacher</h3>
+            <p>You are about to delete <strong id="delete-teacher-name"></strong>.</p>
+            
+            <div class="form-group" style="margin: 15px 0;">
+                <label for="transfer-teacher-select" style="display:block; margin-bottom:5px; color:#2c3e50;">Transfer data to (Optional):</label>
+                <select id="transfer-teacher-select" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+                    <option value="">-- Select Replacement Teacher --</option>
+                </select>
+                <small style="color:#666; font-size:0.85rem;">If selected, exams and sections will be transferred to this teacher. Otherwise, they will be reassigned to you (Admin).</small>
+            </div>
+
+            <div class="modal-actions">
+                <button onclick="document.getElementById('delete-teacher-modal').style.display='none'" class="cancel-btn">Cancel</button>
+                <button onclick="confirmDeleteTeacher()" class="delete-btn">Delete & Transfer</button>
             </div>
         </div>
     </div>
@@ -607,6 +698,54 @@
                 <button onclick="resolveViolation('Dismissed')" class="submit-btn btn-secondary">Dismiss (False Alarm)</button>
                 <button onclick="resolveViolation('Resolved')" class="submit-btn">Confirm Violation</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Re-Exam Modal -->
+    <div id="re-exam-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeReExamModal()">&times;</span>
+            <h3>Schedule Re-Exam</h3>
+            <input type="hidden" id="re-exam-id">
+            
+            <div class="form-group">
+                <label>Re-Exam Type</label>
+                <select id="re-exam-type" onchange="toggleReExamType()">
+                    <option value="students">Specific Students</option>
+                    <option value="class">Entire Class (New Instance)</option>
+                </select>
+            </div>
+
+            <div id="re-exam-students-container" class="form-group">
+                <label>Select Students (Hold Ctrl/Cmd)</label>
+                <select id="re-exam-students" multiple style="height: 150px;"></select>
+            </div>
+
+            <div class="form-group"><label>Date & Time</label><input type="datetime-local" id="re-exam-date" required></div>
+            <div class="form-group"><label>Duration (Minutes)</label><input type="number" id="re-exam-duration" required></div>
+
+            <button onclick="submitReExam()" class="submit-btn" style="width: 100%; margin-top: 15px;">Schedule Re-Exam</button>
+        </div>
+    </div>
+
+    <!-- Import Students Modal -->
+    <div id="import-modal" class="sa-modal">
+        <div class="sa-modal-content">
+            <div class="sa-modal-header">
+                <h3 class="sa-modal-title">Import Students via CSV</h3>
+                <button class="sa-modal-close" onclick="closeModal('import-modal')">&times;</button>
+            </div>
+            <form id="import-form" onsubmit="handleImportStudents(event)">
+                <p style="margin-bottom: 15px; color: #666; font-size: 0.9rem;">
+                    Upload a CSV file with columns: <strong>name, email, usn, semester, section_id</strong>. <br>
+                    Optional: <em>section_label, password</em>.
+                </p>
+                <div class="form-group"><input type="file" name="file" accept=".csv" required></div>
+                <div class="form-actions" style="justify-content: flex-end; margin-top: 20px;">
+                    <button type="button" class="submit-btn btn-secondary" onclick="downloadStudentTemplate()" style="margin-right: auto;">Download Template</button>
+                    <button type="submit" class="submit-btn">Upload & Import</button>
+                </div>
+            </form>
         </div>
     </div>
 

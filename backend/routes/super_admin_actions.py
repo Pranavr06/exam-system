@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Body, Query
+from fastapi import APIRouter, Depends, HTTPException, Body, Query, Request
 from db import get_connection
 from security import get_current_user
+from .system_logger import log_action
 from passlib.context import CryptContext
 import mysql.connector
 
@@ -47,6 +48,15 @@ def create_admin(
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Department not found.")
 
+        # Enforce One Admin per Department Rule
+        cursor.execute("SELECT name FROM admin WHERE department_id = %s", (department_id,))
+        existing_admin = cursor.fetchone()
+        if existing_admin:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"This department already has an Admin ({existing_admin[0]}). Only one Admin (HOD) is allowed per department."
+            )
+
         cursor.execute(
             """INSERT INTO admin (name, email, password_hash, department_id, role) 
                VALUES (%s, %s, %s, %s, 'admin')""",
@@ -67,6 +77,14 @@ def get_dashboard_stats():
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        # Auto-update status for expired exams
+        cursor.execute("""
+            UPDATE exam 
+            SET status = 'completed' 
+            WHERE status != 'completed' AND NOW() > DATE_ADD(date, INTERVAL duration MINUTE)
+        """)
+        conn.commit()
+
         stats = {}
         cursor.execute("SELECT COUNT(*) as count FROM department")
         stats["total_departments"] = cursor.fetchone()["count"]
@@ -80,7 +98,7 @@ def get_dashboard_stats():
         cursor.execute("SELECT COUNT(*) as count FROM student")
         stats["total_students"] = cursor.fetchone()["count"]
 
-        cursor.execute("SELECT COUNT(*) as count FROM exam")
+        cursor.execute("SELECT COUNT(*) as count FROM exam WHERE is_archived = 0")
         stats["total_exams"] = cursor.fetchone()["count"]
 
         cursor.execute("SELECT COUNT(*) as count FROM violation")
@@ -96,19 +114,19 @@ def get_dashboard_stats():
                    (SELECT COUNT(*) FROM exam_section es WHERE es.exam_id = e.exam_id) as section_count
             FROM exam e
             JOIN department d ON e.department_id = d.department_id
-            WHERE e.status = 'active'
+            WHERE e.status = 'active' AND NOW() >= e.date AND NOW() <= (e.date + INTERVAL e.duration MINUTE) AND e.is_archived = 0
             LIMIT 5
         """)
         stats["active_exams"] = cursor.fetchall()
 
         # 3. Recent Violations
         cursor.execute("""
-            SELECT v.violation_type, s.name as student_name, d.department_name, e.exam_name, v.`timestamp`
+            SELECT v.violation_type, s.name as student_name, d.department_name, e.exam_name, v.detected_at as timestamp
             FROM violation v
             JOIN student s ON v.student_id = s.student_id
             JOIN department d ON s.department_id = d.department_id
             JOIN exam e ON v.exam_id = e.exam_id
-            ORDER BY v.`timestamp` DESC
+            ORDER BY v.detected_at DESC
             LIMIT 5
         """)
         stats["recent_violations"] = cursor.fetchall()
@@ -118,9 +136,9 @@ def get_dashboard_stats():
             SELECT 
                 d.department_name,
                 (SELECT COALESCE(AVG((r.total_marks / e.total_marks) * 100), 0) 
-                 FROM result r JOIN exam e ON r.exam_id = e.exam_id 
-                 WHERE e.department_id = d.department_id) as avg_score,
-                (SELECT COUNT(*) FROM exam e WHERE e.department_id = d.department_id AND e.status = 'completed') as completed_exams,
+                 FROM result r JOIN exam e ON r.exam_id = e.exam_id
+                 WHERE e.department_id = d.department_id AND e.is_archived = 0) as avg_score,
+                (SELECT COUNT(*) FROM exam e WHERE e.department_id = d.department_id AND (e.status = 'completed' OR NOW() > (e.date + INTERVAL e.duration MINUTE)) AND e.is_archived = 0) as completed_exams,
                 (SELECT COUNT(*)
                  FROM violation v JOIN student s ON v.student_id = s.student_id 
                  WHERE s.department_id = d.department_id) as violation_count
@@ -195,12 +213,44 @@ def get_dashboard_stats():
         """)
         stats["student_performance_dist"] = cursor.fetchall()
 
+        # 10. System Alerts
+        alerts = []
+        # Exams without questions
+        cursor.execute("""
+            SELECT e.exam_name, d.department_name
+            FROM exam e 
+            LEFT JOIN question q ON e.exam_id = q.exam_id 
+            JOIN department d ON e.department_id = d.department_id
+            WHERE e.is_archived = 0 AND q.question_id IS NULL AND e.status != 'completed'
+        """)
+        empty_exams = cursor.fetchall()
+        for e in empty_exams:
+            alerts.append({"type": "warning", "message": f"⚠️ Exam '{e['exam_name']}' ({e['department_name']}) has no questions."})
+        stats["alerts"] = alerts
+
         stats["system_status"] = "Online"
         
         return stats
     finally:
         cursor.close()
         conn.close()
+
+@router.get("/superadmin/system/health", dependencies=[Depends(require_super_admin)])
+def check_system_health():
+    db_status = "Inactive"
+    try:
+        conn = get_connection()
+        if conn and conn.is_connected():
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            conn.close()
+            db_status = "Active"
+    except Exception:
+        pass
+    
+    return {"database": db_status, "server": "Online"}
 
 @router.get("/superadmin/departments", dependencies=[Depends(require_super_admin)])
 def get_departments():
@@ -324,24 +374,6 @@ def update_admin(
         cursor.close()
         conn.close()
 
-@router.put("/superadmin/admins/{admin_id}/status", dependencies=[Depends(require_super_admin)])
-def toggle_admin_status(admin_id: int, is_active: bool = Body(..., embed=True)):
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "UPDATE admin SET is_active = %s WHERE admin_id = %s",
-            (1 if is_active else 0, admin_id)
-        )
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Admin not found")
-        conn.commit()
-        status_str = "activated" if is_active else "deactivated"
-        return {"message": f"Admin {status_str} successfully."}
-    finally:
-        cursor.close()
-        conn.close()
-
 @router.put("/superadmin/admins/{admin_id}/password", dependencies=[Depends(require_super_admin)])
 def reset_admin_password(admin_id: int, password: str = Body(..., embed=True)):
     hashed_password = pwd_context.hash(password)
@@ -360,22 +392,135 @@ def reset_admin_password(admin_id: int, password: str = Body(..., embed=True)):
         cursor.close()
         conn.close()
 
+@router.delete("/superadmin/admins/{admin_id}")
+def delete_admin(admin_id: int, request: Request, user=Depends(require_super_admin)):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Check if admin exists
+        cursor.execute("SELECT admin_id, name FROM admin WHERE admin_id = %s", (admin_id,))
+        admin = cursor.fetchone()
+        if not admin:
+            raise HTTPException(status_code=404, detail="Admin not found")
+
+        # Unlink dependencies to preserve data (Department-level ownership remains via department_id)
+        cursor.execute("UPDATE exam SET created_by_admin = NULL WHERE created_by_admin = %s", (admin_id,))
+        cursor.execute("UPDATE subject SET created_by_admin = NULL WHERE created_by_admin = %s", (admin_id,))
+        cursor.execute("UPDATE teacher SET created_by_admin = NULL WHERE created_by_admin = %s", (admin_id,))
+        cursor.execute("UPDATE student SET created_by_admin = NULL WHERE created_by_admin = %s", (admin_id,))
+        cursor.execute("UPDATE exam_section SET assigned_by_admin = NULL WHERE assigned_by_admin = %s", (admin_id,))
+        cursor.execute("UPDATE violation SET reviewed_by_admin = NULL WHERE reviewed_by_admin = %s", (admin_id,))
+
+        # Delete the admin
+        cursor.execute("DELETE FROM admin WHERE admin_id = %s", (admin_id,))
+        
+        # Log the action
+        log_action(
+            user_id=user["user_id"],
+            role="super_admin",
+            department_id=None, # Super admin action is global
+            action=f"Deleted Admin: {admin[1]}",
+            entity_type="admin",
+            entity_id=admin_id,
+            ip_address=request.client.host
+        )
+        
+        conn.commit()
+        return {"message": "Admin deleted successfully. Their records have been preserved in the department."}
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.post("/superadmin/admins/replace")
+def replace_admin(
+    request: Request,
+    current_admin_id: int = Body(...),
+    new_name: str = Body(...),
+    new_email: str = Body(...),
+    new_password: str = Body(...),
+    user=Depends(require_super_admin)
+):
+    # Domain restriction
+    if not new_email.endswith("@nitte.edu.in"):
+        raise HTTPException(status_code=400, detail="Invalid admin email domain. Must be @nitte.edu.in")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # 1. Get Current Admin & Dept
+        cursor.execute("SELECT department_id, name FROM admin WHERE admin_id = %s", (current_admin_id,))
+        current_admin = cursor.fetchone()
+        if not current_admin:
+            raise HTTPException(status_code=404, detail="Current admin not found")
+        
+        dept_id = current_admin["department_id"]
+        hashed_password = pwd_context.hash(new_password)
+
+        # 2. Create New Admin (We bypass the 'One Admin' check here because we are in a replacement transaction)
+        try:
+            cursor.execute(
+                "INSERT INTO admin (name, email, password_hash, department_id, role) VALUES (%s, %s, %s, %s, 'admin')",
+                (new_name, new_email, hashed_password, dept_id)
+            )
+            new_admin_id = cursor.lastrowid
+        except mysql.connector.IntegrityError:
+            raise HTTPException(status_code=400, detail="Email for new admin already exists")
+
+        # 3. Transfer Ownership of ALL assets
+        # Note: We use the cursor to execute updates. Since this is one transaction, it's safe.
+        cursor.execute("UPDATE exam SET created_by_admin = %s WHERE created_by_admin = %s", (new_admin_id, current_admin_id))
+        cursor.execute("UPDATE subject SET created_by_admin = %s WHERE created_by_admin = %s", (new_admin_id, current_admin_id))
+        cursor.execute("UPDATE teacher SET created_by_admin = %s WHERE created_by_admin = %s", (new_admin_id, current_admin_id))
+        cursor.execute("UPDATE student SET created_by_admin = %s WHERE created_by_admin = %s", (new_admin_id, current_admin_id))
+        cursor.execute("UPDATE exam_section SET assigned_by_admin = %s WHERE assigned_by_admin = %s", (new_admin_id, current_admin_id))
+        cursor.execute("UPDATE violation SET reviewed_by_admin = %s WHERE reviewed_by_admin = %s", (new_admin_id, current_admin_id))
+
+        # 4. Delete Old Admin
+        cursor.execute("DELETE FROM admin WHERE admin_id = %s", (current_admin_id,))
+
+        # 5. Log
+        log_action(
+            user_id=user["user_id"],
+            role="super_admin",
+            department_id=None,
+            action=f"Replaced Admin {current_admin['name']} with {new_name}",
+            entity_type="admin",
+            entity_id=new_admin_id,
+            ip_address=request.client.host
+        )
+
+        conn.commit()
+        return {"message": f"Admin replaced successfully. All department data transferred to {new_name}."}
+    finally:
+        cursor.close()
+        conn.close()
+
 @router.get("/superadmin/exams", dependencies=[Depends(require_super_admin)])
 def get_all_exams(
     department_id: int = Query(None),
     status: str = Query(None),
-    search: str = Query(None)
+    search: str = Query(None),
+    archived: bool = Query(False)
 ):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        # Auto-update status for expired exams
+        cursor.execute("""
+            UPDATE exam 
+            SET status = 'completed' 
+            WHERE status != 'completed' AND NOW() > DATE_ADD(date, INTERVAL duration MINUTE)
+        """)
+        conn.commit()
+
         query = """
             SELECT 
                 e.exam_id, e.exam_name, e.date, 
                 CASE
                     WHEN e.status = 'completed' THEN 'completed'
                     WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
-                    ELSE e.status
+                    WHEN e.status = 'active' AND NOW() >= e.date THEN 'active'
+                    ELSE 'scheduled'
                 END as status, e.total_marks,
                 d.department_name,
                 s.subject_name,
@@ -387,9 +532,9 @@ def get_all_exams(
             JOIN subject s ON e.subject_id = s.subject_id
             LEFT JOIN teacher t ON e.created_by_teacher = t.teacher_id
             LEFT JOIN admin adm ON e.created_by_admin = adm.admin_id
-            WHERE 1=1
+            WHERE e.is_archived = %s
         """
-        params = []
+        params = [1 if archived else 0]
 
         if department_id:
             query += " AND e.department_id = %s"
@@ -404,6 +549,38 @@ def get_all_exams(
         query += " ORDER BY e.date DESC"
         cursor.execute(query, tuple(params))
         return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.put("/superadmin/exams/{exam_id}/restore", dependencies=[Depends(require_super_admin)])
+def restore_exam_superadmin(exam_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE exam SET is_archived = 0 WHERE exam_id = %s", (exam_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Exam not found")
+        conn.commit()
+        return {"message": "Exam restored successfully"}
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.delete("/superadmin/exams/cleanup", dependencies=[Depends(require_super_admin)])
+def cleanup_archived_exams(days: int = Query(30, ge=1)):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Delete exams that are archived AND scheduled date is older than X days
+        cursor.execute("""
+            DELETE FROM exam 
+            WHERE is_archived = 1 
+            AND date < DATE_SUB(NOW(), INTERVAL %s DAY)
+        """, (days,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return {"message": f"Cleanup complete. {deleted_count} archived exams older than {days} days were permanently deleted."}
     finally:
         cursor.close()
         conn.close()
@@ -456,10 +633,10 @@ def get_student_stats():
         stats["attempts_today"] = cursor.fetchone()["count"]
 
         # 2. Integrity Monitoring
-        cursor.execute("SELECT COUNT(DISTINCT student_id) as count FROM violation WHERE DATE(`timestamp`) = CURDATE()")
+        cursor.execute("SELECT COUNT(DISTINCT student_id) as count FROM violation WHERE DATE(detected_at) = CURDATE()")
         stats["flagged_today"] = cursor.fetchone()["count"]
 
-        cursor.execute("SELECT COUNT(*) as count FROM violation WHERE YEARWEEK(`timestamp`, 1) = YEARWEEK(CURDATE(), 1)")
+        cursor.execute("SELECT COUNT(*) as count FROM violation WHERE YEARWEEK(detected_at, 1) = YEARWEEK(CURDATE(), 1)")
         stats["violations_this_week"] = cursor.fetchone()["count"]
 
         # 3. Dept Strength & Participation
@@ -511,7 +688,7 @@ def get_all_students_analytics(department_id: int = Query(None), search: str = Q
         conn.close()
 
 @router.get("/superadmin/violations/stats", dependencies=[Depends(require_super_admin)])
-def get_violation_analytics(status: str = Query(None)):
+def get_violation_analytics(status: str = Query(None), exam_id: int = Query(None), violation_type: str = Query(None)):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
@@ -520,14 +697,20 @@ def get_violation_analytics(status: str = Query(None)):
         if status:
             where_clause += " AND review_status = %s"
             params.append(status)
+        if exam_id:
+            where_clause += " AND exam_id = %s"
+            params.append(exam_id)
+        if violation_type:
+            where_clause += " AND violation_type = %s"
+            params.append(violation_type)
 
         stats = {}
         
         # 1. Summary Cards
-        cursor.execute(f"SELECT COUNT(*) as c FROM violation WHERE {where_clause} AND DATE(`timestamp`) = CURDATE()", tuple(params))
+        cursor.execute(f"SELECT COUNT(*) as c FROM violation WHERE {where_clause} AND DATE(detected_at) = CURDATE()", tuple(params))
         stats["today"] = cursor.fetchone()["c"]
         
-        cursor.execute(f"SELECT COUNT(*) as c FROM violation WHERE {where_clause} AND YEARWEEK(`timestamp`, 1) = YEARWEEK(CURDATE(), 1)", tuple(params))
+        cursor.execute(f"SELECT COUNT(*) as c FROM violation WHERE {where_clause} AND YEARWEEK(detected_at, 1) = YEARWEEK(CURDATE(), 1)", tuple(params))
         stats["week"] = cursor.fetchone()["c"]
         
         cursor.execute(f"SELECT COUNT(DISTINCT student_id) as c FROM violation WHERE {where_clause}", tuple(params))
@@ -538,10 +721,10 @@ def get_violation_analytics(status: str = Query(None)):
 
         # 2. Trend (Last 7 Days)
         cursor.execute(f"""
-            SELECT DATE_FORMAT(`timestamp`, '%Y-%m-%d') as date, COUNT(*) as count 
+            SELECT DATE_FORMAT(detected_at, '%Y-%m-%d') as date, COUNT(*) as count 
             FROM violation 
-            WHERE {where_clause} AND `timestamp` >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) 
-            GROUP BY DATE_FORMAT(`timestamp`, '%Y-%m-%d')
+            WHERE {where_clause} AND detected_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) 
+            GROUP BY DATE_FORMAT(detected_at, '%Y-%m-%d')
             ORDER BY date ASC
         """, tuple(params))
         stats["trend"] = cursor.fetchall()
@@ -564,13 +747,13 @@ def get_violation_analytics(status: str = Query(None)):
 
         # 5. Recent Violations
         cursor.execute(f"""
-            SELECT v.violation_id, s.name, s.usn, d.department_name, e.exam_name, v.violation_type, v.`timestamp`, v.review_status
+            SELECT v.violation_id, s.name, s.usn, d.department_name, e.exam_name, v.violation_type, v.detected_at as timestamp, v.review_status
             FROM violation v 
             JOIN student s ON v.student_id = s.student_id 
             JOIN department d ON s.department_id = d.department_id 
             JOIN exam e ON v.exam_id = e.exam_id 
             WHERE {where_clause.replace('review_status', 'v.review_status')}
-            ORDER BY v.`timestamp` DESC LIMIT 10
+            ORDER BY v.detected_at DESC LIMIT 10
         """, tuple(params))
         stats["recent"] = cursor.fetchall()
 
@@ -588,6 +771,72 @@ def get_violation_analytics(status: str = Query(None)):
         stats["high_risk"] = cursor.fetchall()
 
         return stats
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/superadmin/violations/history", dependencies=[Depends(require_super_admin)])
+def get_superadmin_violation_history(
+    page: int = 1,
+    limit: int = 20,
+    status: str = Query(None),
+    exam_id: int = Query(None),
+    search: str = Query(None),
+    start_date: str = Query(None),
+    end_date: str = Query(None),
+    violation_type: str = Query(None)
+):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        base_query = """
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            JOIN exam e ON v.exam_id = e.exam_id
+            JOIN department d ON s.department_id = d.department_id
+            WHERE 1=1
+        """
+        params = []
+
+        if status:
+            base_query += " AND v.review_status = %s"
+            params.append(status)
+        if exam_id:
+            base_query += " AND v.exam_id = %s"
+            params.append(exam_id)
+        if start_date:
+            base_query += " AND DATE(v.detected_at) >= %s"
+            params.append(start_date)
+        if end_date:
+            base_query += " AND DATE(v.detected_at) <= %s"
+            params.append(end_date)
+        if violation_type:
+            base_query += " AND v.violation_type = %s"
+            params.append(violation_type)
+        if search:
+            base_query += " AND (s.name LIKE %s OR s.usn LIKE %s OR d.department_name LIKE %s OR v.violation_type LIKE %s)"
+            params.extend([f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%"])
+
+        cursor.execute(f"SELECT COUNT(*) as total {base_query}", tuple(params))
+        total = cursor.fetchone()["total"]
+
+        query = f"""
+            SELECT v.violation_id, s.name as student_name, s.usn, d.department_name, e.exam_name, 
+                   v.violation_type, v.detected_at as timestamp, v.review_status, v.remarks
+            {base_query}
+            ORDER BY v.detected_at DESC
+            LIMIT %s OFFSET %s
+        """
+        params.extend([limit, (page - 1) * limit])
+        cursor.execute(query, tuple(params))
+        history = cursor.fetchall()
+
+        return {
+            "history": history,
+            "total": total,
+            "page": page,
+            "total_pages": (total + limit - 1) // limit
+        }
     finally:
         cursor.close()
         conn.close()

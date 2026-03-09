@@ -3,7 +3,21 @@ async function login(event) {
     
     // Prevent default form submission which causes page reload
     if (event) event.preventDefault();
-    if (window.event) window.event.preventDefault();
+
+    // UI Elements
+    const btn = document.getElementById("login-btn");
+    const btnText = document.getElementById("btn-text");
+    const btnIcon = document.getElementById("btn-icon");
+    const btnSpinner = document.getElementById("btn-spinner");
+    const errorBox = document.getElementById("login-error");
+    const errorText = document.getElementById("error-text");
+
+    // Reset UI
+    if (errorBox) errorBox.style.display = "none";
+    if (btn) { btn.disabled = true; }
+    if (btnText) btnText.textContent = "Signing in...";
+    if (btnIcon) btnIcon.style.display = "none";
+    if (btnSpinner) btnSpinner.style.display = "inline-block";
 
     // Clear any existing tokens to prevent CORS issues with Authorization headers
     localStorage.clear();
@@ -13,16 +27,25 @@ async function login(event) {
     const password = document.getElementById("password").value;
 
     if (!role) {
-        alert("Please select a role.");
+        if (errorBox && errorText) {
+            errorText.textContent = "Please select a role.";
+            errorBox.style.display = "flex";
+        } else {
+            alert("Please select a role.");
+        }
+        resetButton();
         return;
     }
 
     // Normalize role to match backend routes and auth checks (e.g., "Super Admin" -> "super_admin")
     const normalizedRole = role.toLowerCase().replace(/\s+/g, '_');
 
+    // Handle URL prefix difference for Super Admin (role: super_admin, route: /superadmin/...)
+    const urlPrefix = normalizedRole === 'super_admin' ? 'superadmin' : normalizedRole;
+
     try {
         const data = await apiRequest(
-            `/${normalizedRole}/login?email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`,
+            `/${urlPrefix}/login?email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`,
             "POST",
             null
         );
@@ -46,19 +69,50 @@ async function login(event) {
         }
 
     } catch (error) {
-        alert(error.message);
+        let errorMessage = error.message;
+        try {
+            const errorObj = JSON.parse(errorMessage);
+            if (errorObj.detail) {
+                errorMessage = errorObj.detail;
+            }
+        } catch (e) {
+            // Not JSON, keep original message
+        }
+
+        if (errorBox && errorText) {
+            errorText.textContent = errorMessage;
+            errorBox.style.display = "flex";
+        } else {
+            alert(errorMessage);
+        }
+        resetButton();
+    }
+
+    function resetButton() {
+        if (btn) { btn.disabled = false; }
+        if (btnText) btnText.textContent = "Sign In";
+        if (btnIcon) btnIcon.style.display = "inline-block";
+        if (btnSpinner) btnSpinner.style.display = "none";
     }
 }
 
 function toggleLoginPassword(btn) {
     const passwordInput = document.getElementById("password");
+    const icon = btn.querySelector("i");
+
     if (passwordInput.type === "password") {
         passwordInput.type = "text";
         // Switch to Eye Off icon
-        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07-2.3 2.3"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
+        if (icon) {
+            icon.classList.remove("fa-eye");
+            icon.classList.add("fa-eye-slash");
+        }
     } else {
         passwordInput.type = "password";
         // Switch back to Eye icon
-        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+        if (icon) {
+            icon.classList.remove("fa-eye-slash");
+            icon.classList.add("fa-eye");
+        }
     }
 }
