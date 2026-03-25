@@ -730,6 +730,7 @@ def update_database():
                    `name` VARCHAR(100) NOT NULL,
                    `email` VARCHAR(100) NOT NULL,
                    `password_hash` VARCHAR(255) NOT NULL,
+                   `role` VARCHAR(20) DEFAULT 'super_admin',
                    `phone` VARCHAR(20) DEFAULT NULL,
                    `designation` VARCHAR(100) DEFAULT 'System Administrator',
                    `status` ENUM('ACTIVE','INACTIVE') DEFAULT 'ACTIVE',
@@ -745,6 +746,13 @@ def update_database():
             print(f"❌ Failed to create 'super_admin': {e}")
     else:
         print("✅ 'super_admin' table exists. Checking columns...")
+        if not column_exists('super_admin', 'role'):
+             try:
+                 cursor.execute("ALTER TABLE super_admin ADD COLUMN role VARCHAR(20) DEFAULT 'super_admin'")
+                 print("✅ 'role' added to super_admin.")
+             except Exception as e:
+                 print(f"❌ Failed to add 'role': {e}")
+        
         if not column_exists('super_admin', 'phone'):
              try:
                  cursor.execute("ALTER TABLE super_admin ADD COLUMN phone VARCHAR(20) DEFAULT NULL")

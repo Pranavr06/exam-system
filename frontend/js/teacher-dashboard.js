@@ -66,8 +66,9 @@ function showSection(sectionName) {
     if (sectionName === 'results') return loadTeacherResults();
     if (sectionName === 'activity-logs') return loadTeacherActivityLogs();
     if (sectionName === 'violations') {
-        return loadTeacherViolationAnalytics();
-        return loadExamsForViolationFilter();
+        loadTeacherViolationAnalytics();
+        loadExamsForViolationFilter();
+        return;
     }
     if (sectionName === 'monitor') return; // Data loaded by function call
     if (sectionName === 'analytics') return; // Data loaded by function call
@@ -988,10 +989,20 @@ async function loadAssignedSubjects() {
 
 async function loadAssignedSections() {
     const tbody = document.getElementById('sections-table-body');
+    const summary = document.getElementById('sections-summary');
     if (!tbody) return;
     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Loading...</td></tr>';
+    if (summary) summary.textContent = 'Loading stats...';
+    
     try {
         const sections = await apiRequest('/teacher/sections');
+        
+        if (summary) {
+            const totalSections = sections.length;
+            const totalStudents = sections.reduce((sum, sec) => sum + (sec.student_count || 0), 0);
+            summary.innerHTML = `You are currently assigned to <strong>${totalSections}</strong> section(s) with a total of <strong>${totalStudents}</strong> student(s).`;
+        }
+
         if (sections.length === 0) {
             tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">No sections assigned.</td></tr>';
             return;
