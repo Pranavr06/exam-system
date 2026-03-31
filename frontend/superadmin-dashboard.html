@@ -19,6 +19,7 @@
         <button type="button" data-section="students" onclick="showSection('students')"><i class="fas fa-user-graduate fa-fw"></i> Students</button>
         <button type="button" data-section="violations" onclick="showSection('violations')"><i class="fas fa-exclamation-triangle fa-fw"></i> Violations</button>
         <button type="button" data-section="exams" onclick="showSection('exams')"><i class="fas fa-file-alt fa-fw"></i> Exams</button>
+        <button type="button" data-section="infrastructure" onclick="showSection('infrastructure')"><i class="fas fa-network-wired fa-fw"></i> Infrastructure</button>
         <button type="button" data-section="logs" onclick="showSection('logs')"><i class="fas fa-clipboard-list fa-fw"></i> System Logs</button>
         <button type="button" onclick="logout()" class="logout"><i class="fas fa-sign-out-alt fa-fw"></i> Logout</button>
     </div>
@@ -373,6 +374,114 @@
                 </div>
             </div>
 
+            <!-- 7. Infrastructure Management -->
+            <div id="infrastructure-section" class="form-container">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e9ecef; margin-bottom: 20px; padding-bottom: 10px;">
+                    <h3 class="section-title" style="margin: 0; border: none; padding: 0;">Center-Based Exam Infrastructure</h3>
+                </div>
+                
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; flex-wrap: wrap;">
+                    <!-- Block & Floor -->
+                    <div style="flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 24px;">
+                        <div class="sa-card" style="margin-top: 0;">
+                            <div class="sa-card-header"><h3 class="sa-card-title">Add Academic Block</h3></div>
+                            <form id="block-form" onsubmit="handleCreateBlock(event)">
+                                <div class="form-group"><label>Block Name</label><input type="text" name="name" required placeholder="e.g., Main Block"></div>
+                                <button type="submit" class="submit-btn" style="margin-top: 15px;">Create Block</button>
+                            </form>
+                        </div>
+                        <div class="sa-card" style="margin-top: 0;">
+                            <div class="sa-card-header"><h3 class="sa-card-title">Add Floor</h3></div>
+                            <form id="floor-form" onsubmit="handleCreateFloor(event)">
+                                <div class="form-group"><label>Select Block</label><select id="infra-block-select" name="block_id" required><option value="">Loading...</option></select></div>
+                                <div class="form-group">
+                                    <label>Floor Number</label>
+                                    <select name="floor_number" required>
+                                        <option value="" disabled selected>Select Floor</option>
+                                        <option value="-1">Basement (-1)</option>
+                                        <option value="0">Ground Floor (0)</option>
+                                        <option value="1">1st Floor</option>
+                                        <option value="2">2nd Floor</option>
+                                        <option value="3">3rd Floor</option>
+                                        <option value="4">4th Floor</option>
+                                        <option value="5">5th Floor</option>
+                                        <option value="6">6th Floor</option>
+                                        <option value="7">7th Floor</option>
+                                    </select>
+                                </div>
+                                <button type="submit" class="submit-btn" style="margin-top: 15px;">Create Floor</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Lab & PC -->
+                    <div style="flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 24px;">
+                        <div class="sa-card" style="margin-top: 0;">
+                            <div class="sa-card-header"><h3 class="sa-card-title">Add Lab</h3></div>
+                            <form id="lab-form" onsubmit="handleCreateLab(event)">
+                                <div class="form-group"><label>Select Floor</label><select id="infra-floor-select" name="floor_id" required><option value="">Loading...</option></select></div>
+                                <div class="form-group"><label>Lab Name</label><input type="text" name="lab_name" required placeholder="e.g., Lab 101"></div>
+                                <button type="submit" class="submit-btn" style="margin-top: 15px;">Create Lab</button>
+                            </form>
+                        </div>
+                        <div class="sa-card" style="margin-top: 0;">
+                            <div class="sa-card-header"><h3 class="sa-card-title">Add PC</h3></div>
+                            <form id="pc-form" onsubmit="handleCreatePC(event)">
+                                <div class="form-group"><label>Select Lab</label><select id="infra-lab-select" name="lab_id" required><option value="">Loading...</option></select></div>
+                                <div class="form-group"><label>PC Number / ID</label><input type="text" name="pc_number" required placeholder="e.g., PC-01"></div>
+                                <button type="submit" class="submit-btn" style="margin-top: 15px;">Create PC</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; flex-wrap: wrap; margin-top: 30px;">
+                    <!-- Existing Blocks -->
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Existing Blocks</h3></div>
+                        <div style="max-height: 300px; overflow-y: auto;">
+                            <table class="sa-table">
+                                <thead><tr><th>Name</th><th>Actions</th></tr></thead>
+                                <tbody id="blocks-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <!-- Existing Floors -->
+                    <div class="sa-card" style="flex: 1; min-width: 300px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Existing Floors</h3></div>
+                        <div style="max-height: 300px; overflow-y: auto;">
+                            <table class="sa-table">
+                                <thead><tr><th>Floor</th><th>Block</th><th>Actions</th></tr></thead>
+                                <tbody id="floors-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-content-row" style="display: flex; gap: 24px; flex-wrap: wrap; margin-top: 30px;">
+                    <!-- Existing Labs -->
+                    <div class="sa-card" style="flex: 1; min-width: 400px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Existing Labs</h3></div>
+                        <div style="max-height: 400px; overflow-y: auto;">
+                            <table class="sa-table">
+                                <thead><tr><th>Lab Name</th><th>Location</th><th>Actions</th></tr></thead>
+                                <tbody id="labs-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <!-- Existing PCs -->
+                    <div class="sa-card" style="flex: 2; min-width: 500px; margin-top: 0;">
+                        <div class="sa-card-header"><h3 class="sa-card-title">Existing PCs</h3></div>
+                        <div style="max-height: 400px; overflow-y: auto;">
+                            <table class="sa-table">
+                                <thead><tr><th>PC Number</th><th>Lab Location</th><th>Status</th><th>Actions</th></tr></thead>
+                                <tbody id="pcs-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 4. System Logs -->
             <div id="logs-section" class="form-container">
                  <div class="sa-card">
@@ -430,6 +539,32 @@
                     <button type="button" class="submit-btn btn-secondary" onclick="closeModal('delete-confirm-modal')">Cancel</button>
                     <button type="button" id="confirm-delete-btn" class="submit-btn" style="background-color: #DC2626;">Delete</button>
                 </div>
+            </div>
+        </div>
+        
+        <!-- Edit Infrastructure Modal -->
+        <div id="edit-infra-modal" class="sa-modal">
+            <div class="sa-modal-content">
+                <div class="sa-modal-header">
+                    <h3 class="sa-modal-title">Edit Infrastructure</h3>
+                    <button class="sa-modal-close" type="button" onclick="closeModal('edit-infra-modal')">&times;</button>
+                </div>
+                <form id="edit-infra-form" onsubmit="handleEditInfrastructureSubmit(event)">
+                    <input type="hidden" id="edit-infra-type" name="type">
+                    <input type="hidden" id="edit-infra-id" name="id">
+                    <div class="form-group" style="width: 100%; margin-bottom: 15px;">
+                        <label id="edit-name-label">Name / Number</label>
+                        <input type="text" id="edit-infra-name" name="name" required style="width: 100%;">
+                    </div>
+                    <div class="form-group" id="edit-status-group" style="display: none; width: 100%; margin-bottom: 15px;">
+                        <label>Status</label>
+                        <select id="edit-infra-status" name="status" style="width: 100%;"><option value="ACTIVE">ACTIVE</option><option value="INACTIVE">INACTIVE</option></select>
+                    </div>
+                    <div class="form-actions" style="justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="submit-btn btn-secondary" onclick="closeModal('edit-infra-modal')">Cancel</button>
+                        <button type="submit" class="submit-btn" style="background-color: #3182ce;">Save Changes</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

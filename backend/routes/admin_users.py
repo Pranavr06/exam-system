@@ -37,7 +37,7 @@ def get_admin_violation_history(
     page: int = 1,
     limit: int = 20,
     status: str = Query(None),
-    exam_id: int = Query(None),
+    exam_search: str = Query(None),
     search: str = Query(None),
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -64,9 +64,9 @@ def get_admin_violation_history(
         if status:
             base_query += " AND v.review_status = %s"
             params.append(status)
-        if exam_id:
-            base_query += " AND v.exam_id = %s"
-            params.append(exam_id)
+        if exam_search:
+            base_query += " AND e.exam_name LIKE %s"
+            params.append(f"%{exam_search}%")
         if start_date:
             base_query += " AND DATE(v.detected_at) >= %s"
             params.append(start_date)
@@ -539,7 +539,7 @@ def update_student(
 def create_assignment(
     teacher_id: int = Body(...),
     subject_id: int = Body(...),
-    section_id: int = Body(...),
+    section_ids: list[int] = Body(...),
     user=Depends(get_current_user)
 ):
     if user["role"] != "admin":
@@ -553,32 +553,43 @@ def create_assignment(
         cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
         admin_dept = cursor.fetchone()["department_id"]
 
-        # Validate that Teacher, Subject, and Section belong to this department
-        # (This is a simplified check; in production, you might query each table individually for better error messages)
+        # Validate that Teacher and Subject belong to this department
         cursor.execute("SELECT department_id FROM teacher WHERE teacher_id = %s", (teacher_id,))
         t_row = cursor.fetchone()
         cursor.execute("SELECT department_id FROM subject WHERE subject_id = %s", (subject_id,))
         sub_row = cursor.fetchone()
-        cursor.execute("SELECT department_id FROM section WHERE section_id = %s", (section_id,))
-        sec_row = cursor.fetchone()
 
-        if not (t_row and sub_row and sec_row):
+        if not (t_row and sub_row):
              raise HTTPException(status_code=404, detail="One or more selected entities not found")
         
-        if not (t_row["department_id"] == sub_row["department_id"] == sec_row["department_id"] == admin_dept):
+        if not (t_row["department_id"] == sub_row["department_id"] == admin_dept):
              raise HTTPException(status_code=403, detail="All entities must belong to your department")
 
-        # Insert Assignment
-        cursor.execute(
-            """INSERT INTO teaching_assignment (teacher_id, subject_id, section_id, department_id) 
-               VALUES (%s, %s, %s, %s)""",
-            (teacher_id, subject_id, section_id, admin_dept)
+        if not section_ids:
+            raise HTTPException(status_code=400, detail="At least one section must be selected")
+
+        # Validate all selected sections
+        format_strings = ','.join(['%s'] * len(section_ids))
+        cursor.execute(f"SELECT COUNT(*) as count FROM section WHERE section_id IN ({format_strings}) AND department_id = %s", (*section_ids, admin_dept))
+        sec_count = cursor.fetchone()["count"]
+
+        if sec_count != len(set(section_ids)):
+            raise HTTPException(status_code=403, detail="One or more sections are invalid or belong to another department")
+
+        # Bulk Insert Assignments
+        values = [(teacher_id, subject_id, sec_id, admin_dept, 'primary') for sec_id in section_ids]
+        cursor.executemany(
+            """INSERT INTO teaching_assignment (teacher_id, subject_id, section_id, department_id, role) 
+               VALUES (%s, %s, %s, %s, %s)""",
+            values
         )
         conn.commit()
-        return {"message": "Class assigned successfully"}
+        return {"message": f"Successfully assigned teacher to {len(section_ids)} section(s)."}
 
-    except mysql.connector.IntegrityError:
-        raise HTTPException(status_code=400, detail="This assignment already exists")
+    except mysql.connector.IntegrityError as e:
+        if e.errno == 1062:
+            raise HTTPException(status_code=400, detail="One or more of the selected sections already has a teacher assigned for this subject.")
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         cursor.close()
         conn.close()
@@ -713,7 +724,7 @@ def delete_assignment(assignment_id: int, user=Depends(get_current_user)):
         conn.close()
 
 @router.get("/admin/violations/stats")
-def get_admin_violation_stats(status: str = Query(None), exam_id: int = Query(None), user=Depends(get_current_user)):
+def get_admin_violation_stats(status: str = Query(None), exam_search: str = Query(None), user=Depends(get_current_user)):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -730,9 +741,9 @@ def get_admin_violation_stats(status: str = Query(None), exam_id: int = Query(No
         if status:
             base_where += " AND v.review_status = %s"
             params.append(status)
-        if exam_id:
-            base_where += " AND v.exam_id = %s"
-            params.append(exam_id)
+        if exam_search:
+            base_where += " AND v.exam_id IN (SELECT exam_id FROM exam WHERE exam_name LIKE %s)"
+            params.append(f"%{exam_search}%")
 
         stats = {}
         

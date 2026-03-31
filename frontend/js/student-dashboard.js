@@ -188,17 +188,23 @@ async function loadUpcomingExams(isPreview = false) {
             // 3. Current time must be < Exam End Time (Start + Duration)
             
             const endTime = new Date(examDate.getTime() + e.duration * 60000);
-            // Allow start if status is active (trust server status) or if attempt is in progress
-            const canStart = e.status === 'active';
-            const isMissed = !canStart && now > endTime;
+            const isWithinWindow = now >= examDate && now < endTime;
+            // An exam can be started if it's 'active' (manually published) or 'scheduled' and the time is right.
+            const canStart = (e.status === 'active' || e.status === 'scheduled') && isWithinWindow;
+            const isMissed = !canStart && now > endTime && e.attempt_status !== 'IN_PROGRESS';
 
-            const nameLink = canStart ? `<a href="exam-interface.html?exam_id=${e.exam_id}" style="color:#2563EB; font-weight:bold; text-decoration:underline;">${e.exam_name}</a>` : `<strong>${e.exam_name}</strong>`;
-
+            // Allow link for resumable exams too
+            const nameLink = (canStart || e.attempt_status === 'IN_PROGRESS') ? `<a href="exam-interface.html?exam_id=${e.exam_id}" style="color:#2563EB; font-weight:bold; text-decoration:underline;">${e.exam_name}</a>` : `<strong>${e.exam_name}</strong>`;
+            
             let actionBtn = '';
+            const isCenter = e.mode === 'CENTER';
+
             if (e.attempt_status === 'IN_PROGRESS') {
-                actionBtn = `<button onclick="startExam(${e.exam_id})" class="submit-btn" style="background-color:#ffc107; color:black; padding: 5px 10px; font-size: 0.8rem;">Resume</button>`;
+                const actionFunc = isCenter ? `openPasswordModal(${e.exam_id})` : `startExam(${e.exam_id})`;
+                actionBtn = `<button onclick="${actionFunc}" class="submit-btn" style="background-color:#ffc107; color:black; padding: 5px 10px; font-size: 0.8rem;">Resume</button>`;
             } else if (canStart) {
-                actionBtn = `<button onclick="startExam(${e.exam_id})" class="submit-btn" style="padding: 5px 10px; font-size: 0.8rem;">Start Exam</button>`;
+                const actionFunc = isCenter ? `openPasswordModal(${e.exam_id})` : `startExam(${e.exam_id})`;
+                actionBtn = `<button onclick="${actionFunc}" class="submit-btn" style="padding: 5px 10px; font-size: 0.8rem;">Start Exam</button>`;
             } else if (isMissed) {
                 actionBtn = `<span style="color:#e53e3e; font-weight:500; font-size:0.9rem;">Missed</span>`;
             } else {
@@ -260,9 +266,38 @@ async function loadExamHistory() {
     }
 }
 
-function startExam(examId) {
-    // Redirect to exam interface (to be implemented)
-    window.location.href = `exam-interface.html?exam_id=${examId}`;
+function openPasswordModal(examId) {
+    document.getElementById('exam-password-modal').style.display = 'flex';
+    document.getElementById('modal-exam-id').value = examId;
+    document.getElementById('exam-password-input').focus();
+}
+
+function closePasswordModal() {
+    document.getElementById('exam-password-modal').style.display = 'none';
+    document.getElementById('exam-password-input').value = '';
+}
+
+async function startExam(examId) {
+    try {
+        // This creates the attempt record on the backend before redirecting
+        await apiRequest(`/student/exams/start`, 'POST', { exam_id: examId });
+        window.location.href = `exam-interface.html?exam_id=${examId}`;
+    } catch (error) {
+        alert("Error starting exam: " + error.message);
+    }
+}
+
+async function startCenterExam() {
+    const examId = document.getElementById('modal-exam-id').value;
+    const password = document.getElementById('exam-password-input').value.trim();
+
+    try {
+        // The start endpoint will validate the password
+        await apiRequest(`/student/exams/start`, 'POST', { exam_id: parseInt(examId), password: password });
+        window.location.href = `exam-interface.html?exam_id=${examId}`;
+    } catch (error) {
+        alert("Error: " + error.message);
+    }
 }
 
 async function loadAcademicInfo() {

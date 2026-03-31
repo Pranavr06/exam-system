@@ -21,12 +21,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const replaceAdminForm = document.getElementById('replace-admin-form');
     if (replaceAdminForm) replaceAdminForm.addEventListener('submit', handleReplaceAdmin);
 
-    // Violations filter
-    const examFilter = document.getElementById('sa-violation-filter-exam');
-    if (examFilter) {
-        examFilter.addEventListener('change', () => {
-            loadViolationAnalytics();
-            loadViolationHistory();
+    // Violations search filter (Debounced)
+    const examSearchInput = document.getElementById('sa-violation-filter-exam');
+    if (examSearchInput) {
+        let debounceTimer;
+        examSearchInput.addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                loadViolationAnalytics();
+                loadViolationHistory();
+            }, 500);
         });
     }
 });
@@ -74,13 +78,13 @@ function showSection(sectionName) {
     if (sectionName === 'violations') {
     loadViolationAnalytics();
     loadViolationHistory();
-    loadExamsForViolationFilter();
 }
 
 if (sectionName === 'exams') {
     loadAllExams();
     loadDepartmentsForExamFilter();
 }
+    if (sectionName === 'infrastructure') loadInfrastructureData();
     if (sectionName === 'admins') loadDepartmentsForDropdown();
     if (sectionName === 'logs') loadSystemLogs();
 }
@@ -104,6 +108,7 @@ function updateBreadcrumb(section) {
         'students': 'Students',
         'violations': 'Violations',
         'exams': 'Exams',
+        'infrastructure': 'Infrastructure',
         'logs': 'System Logs'
     };
 
@@ -861,7 +866,7 @@ async function loadViolationAnalytics() {
     container.innerHTML = '<div class="spinner"></div>';
 
     const status = document.getElementById('sa-violation-filter-status').value;
-    const examId = document.getElementById('sa-violation-filter-exam').value;
+    const examSearch = document.getElementById('sa-violation-filter-exam').value;
     const type = document.getElementById('sa-violation-filter-type').value;
 
     try {
@@ -870,7 +875,7 @@ async function loadViolationAnalytics() {
         const params = new URLSearchParams();
 
         if (status) params.append('status', status);
-        if (examId) params.append('exam_id', examId);
+        if (examSearch) params.append('exam_search', examSearch);
         if (type) params.append('violation_type', type);
 
         if ([...params].length > 0) url += `?${params.toString()}`;
@@ -914,12 +919,13 @@ async function loadViolationAnalytics() {
 async function loadViolationHistory(page = 1) {
 
     const tbody = document.getElementById('violation-history-body');
+    const paginationContainer = document.getElementById('history-pagination');
     if (!tbody) return;
 
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">Loading...</td></tr>';
 
     const status = document.getElementById('history-filter-status')?.value;
-    const examId = document.getElementById('sa-violation-filter-exam')?.value;
+    const examSearch = document.getElementById('sa-violation-filter-exam')?.value;
     const search = document.getElementById('history-filter-search')?.value;
     const startDate = document.getElementById('history-filter-start-date')?.value;
     const endDate = document.getElementById('history-filter-end-date')?.value;
@@ -930,16 +936,18 @@ async function loadViolationHistory(page = 1) {
         let url = `/superadmin/violations/history?page=${page}&limit=10`;
 
         if (status) url += `&status=${status}`;
-        if (examId) url += `&exam_id=${examId}`;
+        if (examSearch) url += `&exam_search=${encodeURIComponent(examSearch)}`;
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (startDate) url += `&start_date=${startDate}`;
         if (endDate) url += `&end_date=${endDate}`;
         if (type) url += `&violation_type=${type}`;
 
         const data = await apiRequest(url);
+        const totalPages = data.total_pages || 1;
 
         if (!data.history || data.history.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No violations found.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">No violations found.</td></tr>';
+            if (paginationContainer) paginationContainer.innerHTML = '';
             return;
         }
 
@@ -957,8 +965,21 @@ async function loadViolationHistory(page = 1) {
                 <td>${new Date(v.timestamp).toLocaleString()}</td>
                 <td><small>${v.admin_remarks || '-'}</small></td>
                 <td><small>${v.remarks || '-'}</small></td>
+                <td><button class="btn-action" onclick="viewEvidence(${v.violation_id})" style="color: #3182ce; font-weight: 500;">View</button></td>
             </tr>
         `).join('');
+
+        if (paginationContainer) {
+            let paginationHtml = '';
+            if (totalPages > 1) {
+                paginationHtml += `<button type="button" onclick="loadViolationHistory(${page - 1})" ${page === 1 ? 'disabled' : ''}>&laquo;</button>`;
+                for (let i = 1; i <= totalPages; i++) {
+                    paginationHtml += `<button type="button" onclick="loadViolationHistory(${i})" class="${i === page ? 'active' : ''}">${i}</button>`;
+                }
+                paginationHtml += `<button type="button" onclick="loadViolationHistory(${page + 1})" ${page === totalPages ? 'disabled' : ''}>&raquo;</button>`;
+            }
+            paginationContainer.innerHTML = paginationHtml;
+        }
 
     } catch (error) {
 
@@ -966,7 +987,7 @@ async function loadViolationHistory(page = 1) {
 
         tbody.innerHTML = `
             <tr>
-                <td colspan="7" style="color:red;text-align:center;">
+                <td colspan="9" style="color:red;text-align:center;">
                     Failed to load violation history
                 </td>
             </tr>
@@ -1034,19 +1055,6 @@ function renderViolationTypeChart(data) {
         },
         options: { responsive: true, plugins: { legend: { position: 'right' } } }
     });
-}
-
-async function loadExamsForViolationFilter() {
-    const select = document.getElementById('sa-violation-filter-exam');
-    if (!select || select.options.length > 1) return;
-    try {
-        const exams = await apiRequest('/superadmin/exams');
-        exams.forEach(e => {
-            select.appendChild(new Option(e.exam_name, e.exam_id));
-        });
-    } catch (error) {
-        console.error("Failed to load exams for filter", error);
-    }
 }
 
 let showingArchived = false;
@@ -1138,6 +1146,107 @@ async function cleanupArchivedExams() {
     }
 }
 
+let currentViolationId = null;
+
+async function viewEvidence(id) {
+    currentViolationId = id;
+    const modal = document.getElementById('evidence-modal');
+    const content = document.getElementById('evidence-content');
+
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+    document.body.style.overflow = 'hidden';
+
+    const modalContent = content.closest('.modal-content');
+    if (modalContent) {
+        modalContent.style.maxWidth = '800px';
+        modalContent.style.width = '90%';
+        modalContent.style.maxHeight = '90vh';
+        modalContent.style.overflowY = 'auto';
+        content.style.padding = '24px';
+    }
+
+    content.innerHTML = '<div class="spinner"></div>';
+
+    try {
+        const v = await apiRequest(`/superadmin/violations/${id}`);
+
+        const getStatusBadge = (status) => {
+            let color, bgColor;
+            switch (status) {
+                case 'Resolved':
+                    color = '#16A34A'; bgColor = '#DCFCE7'; break;
+                case 'Dismissed':
+                    color = '#64748B'; bgColor = '#F1F5F9'; break;
+                case 'Pending':
+                case 'Under Review':
+                default:
+                    color = '#B45309'; bgColor = '#FEF3C7'; break;
+            }
+            return `<span style="color: ${color}; background-color: ${bgColor}; padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">${status}</span>`;
+        };
+
+        let contentHtml = `
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px 24px; margin-bottom: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 24px;">
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Student</label><div style="font-weight: 600; color: #111827;">${v.student_name} (${v.usn})</div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Exam</label><div style="font-weight: 600; color: #111827;">${v.exam_name}</div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Violation Type</label><div><span style="color: #991B1B; background-color: #FEE2E2; padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">${v.violation_type}</span></div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Status</label><div>${getStatusBadge(v.review_status)}</div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Time</label><div style="font-size: 0.9rem; color: #374151;">${new Date(v.timestamp || v.detected_at).toLocaleString()}</div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Confidence</label><div style="font-size: 0.9rem; color: #374151;">${v.confidence_score || 'N/A'}</div></div>
+            </div>
+
+            ${v.question_text ? `<div style="margin-bottom: 24px;"><h4 style="font-size: 1rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 8px;">Related Question</h4><p style="background-color: #f9fafb; border: 1px solid #e5e7eb; padding: 12px; border-radius: 6px; margin: 0; font-size: 0.9rem; color: #374151;">${v.question_text}</p></div>` : ''}
+
+            <div style="margin-bottom: 24px;">
+                <h4 style="font-size: 1rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 12px;">Evidence</h4>
+                ${v.evidence && v.evidence.length > 0 ? 
+                    v.evidence.map(e => `
+                        <div style="border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 16px; overflow: hidden;">
+                            <div style="background-color: #f9fafb; padding: 8px 12px; font-size: 0.8rem; color: #6b7280; border-bottom: 1px solid #e5e7eb;">Captured: ${new Date(e.captured_time).toLocaleTimeString()}</div>
+                            <div style="display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; justify-content: center;">
+                                ${e.camera_image_path ? `<div style="flex: 1; min-width: 200px; text-align: center;"><label style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #4b5563; display: block;">Camera</label><img src="${e.camera_image_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Camera Evidence"></div>` : ''}
+                                ${e.screenshot_path ? `<div style="flex: 1; min-width: 200px; text-align: center;"><label style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #4b5563; display: block;">Screenshot</label><img src="${e.screenshot_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Screenshot Evidence"></div>` : ''}
+                            </div>
+                        </div>
+                    `).join('') 
+                    : `<div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px;"><i class="fas fa-image" style="font-size: 1.75rem; color: #9ca3af;"></i><span style="font-size: 0.9rem; color: #4b5563;">No visual evidence was captured for this violation.</span></div>`
+                }
+            </div>
+        `;
+        content.innerHTML = contentHtml;
+    } catch (error) {
+        content.innerHTML = `<p style="color:red; text-align:center;">Error loading evidence: ${error.message}</p>`;
+    }
+}
+
+function closeEvidenceModal() {
+    document.getElementById('evidence-modal').style.display = 'none';
+    document.body.style.overflow = '';
+    currentViolationId = null;
+}
+
+function openFullScreenImage(src) {
+    let overlay = document.getElementById('fullscreen-image-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'fullscreen-image-overlay';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); z-index: 100000; display: flex; align-items: center; justify-content: center; cursor: zoom-out;';
+        
+        const img = document.createElement('img');
+        img.id = 'fullscreen-image';
+        img.style.cssText = 'max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);';
+        
+        overlay.appendChild(img);
+        document.body.appendChild(overlay);
+        
+        overlay.onclick = function() { this.style.display = 'none'; };
+    }
+    document.getElementById('fullscreen-image').src = src;
+    overlay.style.display = 'flex';
+}
+
 // System Logs (re-using admin dashboard logic)
 async function loadSystemLogs(page = 1) {
     const tbody = document.getElementById('system-logs-body');
@@ -1198,3 +1307,236 @@ async function loadSystemLogs(page = 1) {
     }
 }
 // Generic Form Handler
+
+// --- Infrastructure Management Logic ---
+async function loadInfrastructureData() {
+    try {
+        const hierarchy = await apiRequest('/infrastructure/labs');
+        
+        const blockSelect = document.getElementById('infra-block-select');
+        const floorSelect = document.getElementById('infra-floor-select');
+        const labSelect = document.getElementById('infra-lab-select');
+        
+        if (!blockSelect || !floorSelect || !labSelect) return;
+
+        // Extract unique blocks
+        const uniqueBlocks = [...new Map(hierarchy.map(item => [item.block_id, {id: item.block_id, name: item.block_name}])).values()];
+        blockSelect.innerHTML = '<option value="">Select Block</option>';
+        uniqueBlocks.forEach(b => blockSelect.appendChild(new Option(b.name, b.id)));
+        
+        // Extract unique floors
+        const uniqueFloors = [...new Map(hierarchy.filter(i => i.floor_id).map(item => [item.floor_id, {id: item.floor_id, name: `${item.block_name} - ${item.floor_number === -1 ? 'Basement' : item.floor_number === 0 ? 'Ground Floor' : 'Floor ' + item.floor_number}`}])).values()];
+        floorSelect.innerHTML = '<option value="">Select Floor</option>';
+        uniqueFloors.forEach(f => floorSelect.appendChild(new Option(f.name, f.id)));
+        
+        // Extract unique labs
+        const uniqueLabs = [...new Map(hierarchy.filter(i => i.lab_id).map(item => [item.lab_id, {id: item.lab_id, name: `${item.block_name} - ${item.floor_number === -1 ? 'B' : item.floor_number === 0 ? 'G' : 'F' + item.floor_number} - ${item.lab_name}`}])).values()];
+        labSelect.innerHTML = '<option value="">Select Lab</option>';
+        uniqueLabs.forEach(l => labSelect.appendChild(new Option(l.name, l.id)));
+
+        // New: Render tables
+        renderInfrastructureTables(hierarchy);
+        loadAllPCs(); // Also load PCs
+        
+    } catch (error) {
+        console.error("Failed to load infrastructure", error);
+    }
+}
+
+async function handleCreateBlock(e) {
+    e.preventDefault();
+    try {
+        const name = e.target.querySelector('input[name="name"]').value;
+        const res = await apiRequest('/infrastructure/block', 'POST', { name });
+        alert(res.message);
+        e.target.reset();
+        loadInfrastructureData();
+    } catch (err) { alert("Error: " + err.message); }
+}
+
+async function handleCreateFloor(e) {
+    e.preventDefault();
+    try {
+        const data = Object.fromEntries(new FormData(e.target).entries());
+        data.block_id = parseInt(data.block_id);
+        data.floor_number = parseInt(data.floor_number);
+        const res = await apiRequest('/infrastructure/floor', 'POST', data);
+        alert(res.message);
+        e.target.reset();
+        loadInfrastructureData();
+    } catch (err) { alert("Error: " + err.message); }
+}
+
+async function handleCreateLab(e) {
+    e.preventDefault();
+    try {
+        const data = Object.fromEntries(new FormData(e.target).entries());
+        data.floor_id = parseInt(data.floor_id);
+        const res = await apiRequest('/infrastructure/lab', 'POST', data);
+        alert(res.message);
+        e.target.reset();
+        loadInfrastructureData();
+    } catch (err) { alert("Error: " + err.message); }
+}
+
+async function handleCreatePC(e) {
+    e.preventDefault();
+    try {
+        const data = Object.fromEntries(new FormData(e.target).entries());
+        data.lab_id = parseInt(data.lab_id);
+        const res = await apiRequest('/infrastructure/pc', 'POST', data);
+        alert(res.message);
+        e.target.reset();
+        loadInfrastructureData();
+    } catch (err) { alert("Error: " + err.message); }
+}
+
+function renderInfrastructureTables(hierarchy) {
+    const blocksBody = document.getElementById('blocks-table-body');
+    const floorsBody = document.getElementById('floors-table-body');
+    const labsBody = document.getElementById('labs-table-body');
+
+    if (!blocksBody || !floorsBody || !labsBody) return;
+
+    // Process and render blocks
+    const uniqueBlocks = [...new Map(hierarchy.map(item => [item.block_id, {id: item.block_id, name: item.block_name}])).values()];
+    if (uniqueBlocks.length > 0) {
+        blocksBody.innerHTML = uniqueBlocks.map(b => `
+            <tr>
+                <td><strong>${b.name}</strong></td>
+                <td>
+                    <button class="btn-edit" onclick="openEditInfraModal('block', ${b.id}, '${b.name.replace(/'/g, "\\'")}')" style="margin-right: 5px;">Edit</button>
+                    <button class="btn-delete" onclick="handleDeleteInfrastructure('block', ${b.id}, '${b.name.replace(/'/g, "\\'")}')">Delete</button>
+                </td>
+            </tr>
+        `).join('');
+    } else {
+        blocksBody.innerHTML = '<tr><td colspan="2" style="text-align:center;">No blocks created.</td></tr>';
+    }
+
+    // Process and render floors
+    const uniqueFloors = [...new Map(hierarchy.filter(i => i.floor_id).map(item => [item.floor_id, {id: item.floor_id, number: item.floor_number, block_name: item.block_name}])).values()];
+    if (uniqueFloors.length > 0) {
+        floorsBody.innerHTML = uniqueFloors.map(f => `
+            <tr>
+                <td>${f.number === -1 ? 'Basement' : f.number === 0 ? 'Ground Floor' : 'Floor ' + f.number}</td>
+                <td>${f.block_name}</td>
+                <td>
+                    <button class="btn-edit" onclick="openEditInfraModal('floor', ${f.id}, '${f.number}')" style="margin-right: 5px;">Edit</button>
+                    <button class="btn-delete" onclick="handleDeleteInfrastructure('floor', ${f.id}, '${f.number === -1 ? 'Basement' : f.number === 0 ? 'Ground Floor' : 'Floor ' + f.number}')">Delete</button>
+                </td>
+            </tr>
+        `).join('');
+    } else {
+        floorsBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No floors created.</td></tr>';
+    }
+
+    // Process and render labs
+    const uniqueLabs = [...new Map(hierarchy.filter(i => i.lab_id).map(item => [item.lab_id, {id: item.lab_id, name: item.lab_name, location: `${item.block_name} - ${item.floor_number === -1 ? 'B' : item.floor_number === 0 ? 'G' : 'F' + item.floor_number}`}])).values()];
+    if (uniqueLabs.length > 0) {
+        labsBody.innerHTML = uniqueLabs.map(l => `
+            <tr>
+                <td><strong>${l.name}</strong></td>
+                <td>${l.location}</td>
+                <td>
+                    <button class="btn-edit" onclick="openEditInfraModal('lab', ${l.id}, '${l.name.replace(/'/g, "\\'")}')" style="margin-right: 5px;">Edit</button>
+                    <button class="btn-delete" onclick="handleDeleteInfrastructure('lab', ${l.id}, '${l.name.replace(/'/g, "\\'")}')">Delete</button>
+                </td>
+            </tr>
+        `).join('');
+    } else {
+        labsBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No labs created.</td></tr>';
+    }
+}
+
+async function loadAllPCs() {
+    const pcsBody = document.getElementById('pcs-table-body');
+    if (!pcsBody) return;
+    pcsBody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Loading...</td></tr>';
+    try {
+        const pcs = await apiRequest('/infrastructure/pcs');
+        if (pcs.length > 0) {
+            pcsBody.innerHTML = pcs.map(p => `
+                <tr>
+                    <td><strong>${p.pc_number}</strong></td>
+                    <td>${p.block_name} - ${p.floor_number === -1 ? 'B' : p.floor_number === 0 ? 'G' : 'F' + p.floor_number} - ${p.lab_name}</td>
+                    <td><span class="status-badge ${p.status.toLowerCase()}">${p.status}</span></td>
+                    <td>
+                        <button class="btn-edit" onclick="openEditInfraModal('pc', ${p.pc_id}, '${p.pc_number.replace(/'/g, "\\'")}', '${p.status}')" style="margin-right: 5px;">Edit</button>
+                        <button class="btn-delete" onclick="handleDeleteInfrastructure('pc', ${p.pc_id}, '${p.pc_number.replace(/'/g, "\\'")}')">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+        } else {
+            pcsBody.innerHTML = '<tr><td colspan="4" style="text-align:center;">No PCs created.</td></tr>';
+        }
+    } catch (error) {
+        pcsBody.innerHTML = '<tr><td colspan="4" style="color:red; text-align:center;">Error loading PCs.</td></tr>';
+    }
+}
+
+function openEditInfraModal(type, id, currentValue, status = null) {
+    document.getElementById('edit-infra-type').value = type;
+    document.getElementById('edit-infra-id').value = id;
+    document.getElementById('edit-infra-name').value = currentValue;
+    
+    const label = document.getElementById('edit-name-label');
+    const statusGroup = document.getElementById('edit-status-group');
+    const nameInput = document.getElementById('edit-infra-name');
+    
+    nameInput.type = type === 'floor' ? 'number' : 'text';
+    if (type === 'floor') {
+        nameInput.min = "-1";
+        nameInput.max = "7";
+    } else {
+        nameInput.removeAttribute('min');
+        nameInput.removeAttribute('max');
+    }
+
+    label.textContent = type === 'floor' ? 'Floor Number' : (type === 'pc' ? 'PC Number' : 'Name');
+
+    statusGroup.style.display = type === 'pc' ? 'block' : 'none';
+    if (type === 'pc') document.getElementById('edit-infra-status').value = status || 'ACTIVE';
+    
+    openModal('edit-infra-modal');
+}
+
+async function handleEditInfrastructureSubmit(e) {
+    e.preventDefault();
+    const type = document.getElementById('edit-infra-type').value;
+    const id = document.getElementById('edit-infra-id').value;
+    const nameVal = document.getElementById('edit-infra-name').value;
+    
+    let payload = {};
+    if (type === 'block') payload = { name: nameVal };
+    else if (type === 'floor') payload = { floor_number: parseInt(nameVal) };
+    else if (type === 'lab') payload = { lab_name: nameVal };
+    else if (type === 'pc') payload = { pc_number: nameVal, status: document.getElementById('edit-infra-status').value };
+    
+    try {
+        const res = await apiRequest(`/infrastructure/${type}/${id}`, 'PUT', payload);
+        alert(res.message);
+        closeModal('edit-infra-modal');
+        loadInfrastructureData();
+    } catch (err) { alert("Error: " + err.message); }
+}
+
+async function handleDeleteInfrastructure(type, id, name) {
+    let message = `Are you sure you want to delete '${name}'?`;
+    if (type === 'block') {
+        message += "\n\nWARNING: Deleting a block will PERMANENTLY delete all associated floors, labs, and PCs. This action cannot be undone.";
+    } else if (type === 'floor') {
+        message += "\n\nThis will also delete all labs and PCs on this floor.";
+    } else if (type === 'lab') {
+        message += "\n\nThis will also delete all PCs in this lab.";
+    }
+
+    if (!confirm(message)) return;
+
+    try {
+        const res = await apiRequest(`/infrastructure/${type}/${id}`, 'DELETE');
+        alert(res.message);
+        loadInfrastructureData(); // Reload all data
+    } catch (err) {
+        alert("Error: " + err.message);
+    }

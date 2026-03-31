@@ -138,6 +138,46 @@
                         <small style="color: #666; display: block; margin-top: 5px; font-size: 0.85rem;">Select all sections that will take this exam.</small>
                     </div>
 
+                <!-- Exam Mode Selection -->
+                <div class="form-group">
+                    <label for="exam-mode">Exam Mode</label>
+                    <select id="exam-mode" name="mode" required>
+                        <option value="ONLINE">Online Exam (Remote)</option>
+                        <option value="CENTER">Center-Based Exam (Lab Hosted)</option>
+                    </select>
+                </div>
+
+                <!-- Center Exam Infrastructure Elements (Hidden by default) -->
+                <div id="center-exam-container" style="display: none; width: 100%; gap: 15px; flex-wrap: wrap; background-color: #f8fafc; padding: 15px; border-radius: 6px; margin-top: 10px; border: 1px solid #e2e8f0;">
+                    <h4 style="width: 100%; margin: 0 0 10px 0; color: #2c3e50;">Center Details</h4>
+                    
+                    <div class="form-group">
+                        <label for="exam-block">Academic Block</label>
+                        <select id="exam-block" name="block_id">
+                            <option value="">Select Block</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="exam-floor">Floor</label>
+                        <select id="exam-floor" name="floor_id">
+                            <option value="">Select Floor</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="exam-lab">Assigned Lab</label>
+                        <select id="exam-lab" name="lab_id">
+                            <option value="">Select Lab</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="exam-password">Exam Access Password</label>
+                        <input type="text" id="exam-password" name="password" placeholder="Enter strictly for lab users">
+                    </div>
+                </div>
+
                 <div class="form-actions">
                     <button type="submit" class="submit-btn" id="create-exam-btn">Create Exam</button>
                     <button type="button" class="submit-btn btn-secondary" id="cancel-exam-edit-btn" style="display: none;" onclick="resetExamForm()">Cancel</button>
@@ -218,7 +258,7 @@
             <div id="questions-list-container" style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; display: none;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                     <h4 style="margin: 0; color: #2c3e50;">Questions Added</h4>
-                    <div id="marks-summary" style="font-weight: bold; color: #2b6cb0; background: #ebf8ff; padding: 5px 10px; border-radius: 4px;"></div>
+                    <div id="marks-summary" style="font-weight: bold; color: #2b6cb0; background: #ebf8ff; padding: 5px 10px; border-radius: 4px; border: 1px solid #bee3f8;"></div>
                 </div>
                 <table id="questions-table">
                     <thead><tr><th>Question</th><th>Correct Option</th><th>Marks</th><th>Actions</th></tr></thead>
@@ -471,6 +511,33 @@
                 </div>
             </div>
 
+    <!-- Assign PC Modal -->
+    <div id="assign-pc-modal" class="modal">
+        <div class="modal-content large">
+            <span class="close-btn" onclick="closeAssignPCModal()">&times;</span>
+            <h3 style="margin-bottom: 15px; color: #2c3e50;">Assign Students to PCs</h3>
+            <input type="hidden" id="assign-pc-exam-id">
+            
+            <div style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; background: #f8f9fa; padding: 10px; border-radius: 6px;">
+                <span>Total Students: <strong id="assign-pc-student-count">0</strong></span>
+                <span>Available PCs: <strong id="assign-pc-count">0</strong></span>
+                <button type="button" class="btn-quick" style="padding: 5px 10px;" onclick="autoAssignPCs()">Auto-Assign PCs</button>
+            </div>
+
+            <div style="max-height: 400px; overflow-y: auto; margin-bottom: 20px; border: 1px solid #e2e8f0; border-radius: 6px;">
+                <table id="assign-pc-table">
+                    <thead><tr><th>Student Name</th><th>USN</th><th>Section</th><th>Assigned PC</th></tr></thead>
+                    <tbody id="assign-pc-tbody"></tbody>
+                </table>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="submit-btn btn-secondary" onclick="closeAssignPCModal()">Cancel</button>
+                <button type="button" class="submit-btn" style="background-color: #3182ce;" onclick="submitPCAssignments()">Save Assignments</button>
+            </div>
+        </div>
+    </div>
+
             <!-- 10. Monitor Exam Section -->
             <div id="monitor-section" class="form-container">
                 <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
@@ -524,5 +591,6 @@
     <script src="js/api.js"></script>
     <script src="js/auth.js"></script>
     <script src="js/teacher-dashboard.js"></script>
+    <script src="js/idle-detector.js"></script>
 </body>
 </html>

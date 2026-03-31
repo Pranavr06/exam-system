@@ -688,7 +688,7 @@ def get_all_students_analytics(department_id: int = Query(None), search: str = Q
         conn.close()
 
 @router.get("/superadmin/violations/stats", dependencies=[Depends(require_super_admin)])
-def get_violation_analytics(status: str = Query(None), exam_id: int = Query(None), violation_type: str = Query(None)):
+def get_violation_analytics(status: str = Query(None), exam_search: str = Query(None), violation_type: str = Query(None)):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
@@ -697,9 +697,9 @@ def get_violation_analytics(status: str = Query(None), exam_id: int = Query(None
         if status:
             where_clause += " AND review_status = %s"
             params.append(status)
-        if exam_id:
-            where_clause += " AND exam_id = %s"
-            params.append(exam_id)
+        if exam_search:
+            where_clause += " AND exam_id IN (SELECT exam_id FROM exam WHERE exam_name LIKE %s)"
+            params.append(f"%{exam_search}%")
         if violation_type:
             where_clause += " AND violation_type = %s"
             params.append(violation_type)
@@ -780,7 +780,7 @@ def get_superadmin_violation_history(
     page: int = 1,
     limit: int = 20,
     status: str = Query(None),
-    exam_id: int = Query(None),
+    exam_search: str = Query(None),
     search: str = Query(None),
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -801,9 +801,9 @@ def get_superadmin_violation_history(
         if status:
             base_query += " AND v.review_status = %s"
             params.append(status)
-        if exam_id:
-            base_query += " AND v.exam_id = %s"
-            params.append(exam_id)
+        if exam_search:
+            base_query += " AND e.exam_name LIKE %s"
+            params.append(f"%{exam_search}%")
         if start_date:
             base_query += " AND DATE(v.detected_at) >= %s"
             params.append(start_date)

@@ -138,7 +138,7 @@ def get_student_upcoming_exams(user=Depends(get_current_user)):
         section_id = student["section_id"]
 
         cursor.execute("""
-            SELECT e.exam_id, e.exam_name, s.subject_name, e.date, e.duration, 
+            SELECT e.exam_id, e.exam_name, s.subject_name, e.date, e.duration, e.mode, 
                    CASE
                        WHEN e.status = 'completed' THEN 'completed'
                        WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
@@ -160,8 +160,8 @@ def get_student_upcoming_exams(user=Depends(get_current_user)):
 
         # Fetch Specific Retakes
         cursor.execute("""
-            SELECT er.retake_id, e.exam_id, CONCAT('Retake: ', e.exam_name) as exam_name, s.subject_name, 
-                   er.retake_date as date, er.retake_duration as duration, 
+            SELECT er.retake_id, e.exam_id, CONCAT('Retake: ', e.exam_name) as exam_name, s.subject_name,
+                   er.retake_date as date, er.retake_duration as duration, e.mode,
                    er.status, e.total_marks, 'PENDING' as attempt_status, 'true' as is_specific_retake
             FROM exam_retake er
             JOIN exam e ON er.exam_id = e.exam_id

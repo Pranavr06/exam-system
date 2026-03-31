@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from db import get_connection
 from security import get_current_user
+from passlib.context import CryptContext
 from datetime import datetime, timedelta
 
 router = APIRouter()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 RISK_THRESHOLD = 5.0
 
@@ -79,7 +81,7 @@ def auto_finalize_if_expired(cursor, student_id, exam_id):
 
 # 🚀 START EXAM
 @router.post("/student/exams/start")
-def start_exam(exam_id: int = Body(..., embed=True), user=Depends(get_current_user)):
+def start_exam(exam_id: int = Body(...), password: str = Body(None), user=Depends(get_current_user)):
     if user["role"] != "student":
         raise HTTPException(status_code=403)
 
@@ -87,17 +89,50 @@ def start_exam(exam_id: int = Body(..., embed=True), user=Depends(get_current_us
     cursor = conn.cursor(dictionary=True)
 
     try:
-        cursor.execute(
-            "INSERT INTO attempt (student_id, exam_id) VALUES (%s, %s)",
-            (user["user_id"], exam_id),
-        )
+        # Check exam mode and password if provided
+        cursor.execute("SELECT mode, password_hash as exam_password, status, date, duration FROM exam WHERE exam_id = %s", (exam_id,))
+        exam = cursor.fetchone()
+        if not exam:
+            raise HTTPException(status_code=404, detail="Exam not found")
+
+        exam_start_time = exam['date']
+        exam_end_time = exam['date'] + timedelta(minutes=exam['duration'])
+        now = datetime.now()
+
+        # Check time window first
+        if now < exam_start_time:
+            raise HTTPException(status_code=403, detail="Exam has not started yet.")
+        if now > exam_end_time:
+            raise HTTPException(status_code=403, detail="Exam has already ended.")
+
+        # Now that we are in the window, check status.
+        if exam['status'] not in ['active', 'scheduled']:
+            raise HTTPException(status_code=403, detail=f"Exam is not available to start (status: {exam['status']}).")
+
+        if exam['mode'] == 'CENTER':
+            if not password:
+                raise HTTPException(status_code=400, detail="Password is required for this exam.")
+            if not exam['exam_password'] or not pwd_context.verify(password.strip(), exam['exam_password']):
+                raise HTTPException(status_code=403, detail="Incorrect exam password.")
+
+        # Check if attempt exists to handle resume
+        cursor.execute("SELECT attempt_id FROM attempt WHERE student_id = %s AND exam_id = %s", (user['user_id'], exam_id))
+        if cursor.fetchone():
+             # It's a resume, no action needed as they will be redirected to the exam page
+             pass
+        else:
+            # It's a new start
+            cursor.execute(
+                "INSERT INTO attempt (student_id, exam_id, status) VALUES (%s, %s, 'IN_PROGRESS')",
+                (user["user_id"], exam_id),
+            )
+
         conn.commit()
         return {"message": "Exam started successfully"}
 
     finally:
         cursor.close()
         conn.close()
-
 
 # 🚀 FETCH QUESTIONS
 @router.get("/student/exams/questions")

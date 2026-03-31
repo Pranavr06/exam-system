@@ -147,6 +147,25 @@
                 </div>
             </div>
 
+            <!-- Center Exam Password Modal -->
+            <div id="exam-password-modal" class="modal">
+                <div class="modal-content" style="width: 90%; max-width: 400px;">
+                    <span class="close-btn" onclick="closePasswordModal()">&times;</span>
+                    <h3 style="margin-bottom: 15px; color: #2c3e50;">Enter Exam Password</h3>
+                    <p style="font-size: 0.9rem; color: #666; margin-bottom: 20px;">This is a center-based exam. Please enter the password provided by the invigilator.</p>
+                    <form onsubmit="event.preventDefault(); startCenterExam();">
+                        <input type="hidden" id="modal-exam-id">
+                        <div class="form-group" style="width: 100%;">
+                            <input type="password" id="exam-password-input" required placeholder="Exam Password" style="text-align: center; font-size: 1.1rem; letter-spacing: 2px;">
+                        </div>
+                        <div class="form-actions" style="margin-top: 20px;">
+                            <button type="button" class="submit-btn btn-secondary" onclick="closePasswordModal()">Cancel</button>
+                            <button type="submit" class="submit-btn">Start Exam</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
         </div>
     </div>
 

@@ -24,10 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function initializeExam() {
     try {
-        // 1. Start Exam Session (Backend check/create attempt)
-        await apiRequest('/student/exams/start', 'POST', { exam_id: parseInt(examId) });
-
-        // 2. Fetch Questions
+        // Fetch Questions (Attempt is already created on the previous screen)
         const data = await apiRequest(`/student/exams/questions?exam_id=${examId}`);
         
         if (data.message && data.auto_submitted) {
@@ -44,7 +41,7 @@ async function initializeExam() {
             return;
         }
 
-        // 3. Set Timer & Title from Server Data
+        // Set Timer & Title from Server Data
         document.getElementById('exam-title').textContent = data.exam_name;
         remainingTime = Math.floor(data.remaining_seconds);
         startTimer();

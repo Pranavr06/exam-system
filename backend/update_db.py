@@ -1,5 +1,4 @@
 from db import get_connection
-import mysql.connector
 
 def update_database():
     conn = get_connection()
@@ -393,25 +392,61 @@ def update_database():
          except Exception as e:
              print(f"❌ Failed to create 'question_option': {e}")
 
-    # 4. Create 'teaching_assignment' table (if missing)
-    try:
+    # 4. Check 'teaching_assignment' table
+    print("Checking 'teaching_assignment' table...")
+    cursor.execute("SHOW TABLES LIKE 'teaching_assignment'")
+    if not cursor.fetchone():
+        print("⚠️ 'teaching_assignment' table missing. Creating it...")
+        try:
+            cursor.execute("""
+                CREATE TABLE teaching_assignment (
+                    assignment_id INT PRIMARY KEY AUTO_INCREMENT,
+                    teacher_id INT NOT NULL,
+                    subject_id INT NOT NULL,
+                    section_id INT NOT NULL,
+                    department_id INT NOT NULL,
+                    role ENUM('primary', 'assistant') DEFAULT 'primary',
+                    FOREIGN KEY (teacher_id) REFERENCES teacher(teacher_id) ON DELETE CASCADE,
+                    FOREIGN KEY (subject_id) REFERENCES subject(subject_id) ON DELETE CASCADE,
+                    FOREIGN KEY (section_id) REFERENCES section(section_id) ON DELETE CASCADE,
+                    FOREIGN KEY (department_id) REFERENCES department(department_id) ON DELETE RESTRICT,
+                    UNIQUE KEY unique_subject_section (subject_id, section_id)
+                )
+            """)
+            print("✅ 'teaching_assignment' table created successfully.")
+        except Exception as e:
+            print(f"❌ Failed to create 'teaching_assignment': {e}")
+    else:
+        print("✅ 'teaching_assignment' table exists. Checking columns and constraints...")
+        if not column_exists('teaching_assignment', 'role'):
+            print("⚠️ 'role' missing in 'teaching_assignment'. Adding it...")
+            try:
+                cursor.execute("ALTER TABLE teaching_assignment ADD COLUMN role ENUM('primary', 'assistant') DEFAULT 'primary'")
+                print("✅ 'role' added successfully.")
+            except Exception as e:
+                print(f"❌ Failed to add 'role': {e}")
+
+        # Check for strict unique constraint on (subject_id, section_id)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS teaching_assignment (
-                assignment_id INT PRIMARY KEY AUTO_INCREMENT,
-                teacher_id INT NOT NULL,
-                subject_id INT NOT NULL,
-                section_id INT NOT NULL,
-                department_id INT NOT NULL,
-                FOREIGN KEY (teacher_id) REFERENCES teacher(teacher_id) ON DELETE CASCADE,
-                FOREIGN KEY (subject_id) REFERENCES subject(subject_id) ON DELETE CASCADE,
-                FOREIGN KEY (section_id) REFERENCES section(section_id) ON DELETE CASCADE,
-                FOREIGN KEY (department_id) REFERENCES department(department_id) ON DELETE RESTRICT,
-                UNIQUE (teacher_id, subject_id, section_id)
-            )
+            SELECT COUNT(*) as count 
+            FROM information_schema.STATISTICS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'teaching_assignment' 
+            AND INDEX_NAME = 'unique_subject_section'
         """)
-        print("✅ 'teaching_assignment' table checked/created.")
-    except Exception as e:
-        print(f"❌ Failed to create 'teaching_assignment': {e}")
+        if cursor.fetchone()['count'] == 0:
+            print("⚠️ Unique constraint 'unique_subject_section' missing. Adding it...")
+            try:
+                # Attempt to drop old leniant constraint if it was auto-named 'teacher_id'
+                cursor.execute("ALTER TABLE teaching_assignment DROP INDEX teacher_id")
+            except Exception:
+                pass
+            
+            try:
+                cursor.execute("ALTER TABLE teaching_assignment ADD CONSTRAINT unique_subject_section UNIQUE (subject_id, section_id)")
+                print("✅ Unique constraint 'unique_subject_section' added.")
+            except Exception as e:
+                print(f"❌ Failed to add unique constraint (make sure no duplicate subject-section mappings exist): {e}")
 
     # 5. Check 'exam_section' table and 'assigned_by_teacher' column
     print("Checking 'exam_section' table...")
@@ -787,6 +822,125 @@ def update_database():
                  print("✅ 'last_login' added to super_admin.")
              except Exception as e:
                  print(f"❌ Failed to add 'last_login': {e}")
+
+    # --- INFRASTRUCTURE TABLES (Center-Based Exams) ---
+    print("Checking Infrastructure tables...")
+    
+    # Academic Block
+    cursor.execute("SHOW TABLES LIKE 'academic_block'")
+    if not cursor.fetchone():
+        try:
+            cursor.execute("""
+                CREATE TABLE `academic_block` (
+                    `block_id` INT NOT NULL AUTO_INCREMENT,
+                    `name` VARCHAR(100) NOT NULL UNIQUE,
+                    PRIMARY KEY (`block_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            print("✅ 'academic_block' table created.")
+        except Exception as e: print(f"❌ Failed to create 'academic_block': {e}")
+
+    # Floor
+    cursor.execute("SHOW TABLES LIKE 'floor'")
+    if not cursor.fetchone():
+        try:
+            cursor.execute("""
+                CREATE TABLE `floor` (
+                    `floor_id` INT NOT NULL AUTO_INCREMENT,
+                    `block_id` INT NOT NULL,
+                    `floor_number` INT NOT NULL,
+                    PRIMARY KEY (`floor_id`),
+                    FOREIGN KEY (`block_id`) REFERENCES `academic_block`(`block_id`) ON DELETE CASCADE,
+                    UNIQUE KEY `unique_block_floor` (`block_id`, `floor_number`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            print("✅ 'floor' table created.")
+        except Exception as e: print(f"❌ Failed to create 'floor': {e}")
+
+    # Lab
+    cursor.execute("SHOW TABLES LIKE 'lab'")
+    if not cursor.fetchone():
+        try:
+            cursor.execute("""
+                CREATE TABLE `lab` (
+                    `lab_id` INT NOT NULL AUTO_INCREMENT,
+                    `floor_id` INT NOT NULL,
+                    `lab_name` VARCHAR(100) NOT NULL,
+                    PRIMARY KEY (`lab_id`),
+                    FOREIGN KEY (`floor_id`) REFERENCES `floor`(`floor_id`) ON DELETE CASCADE,
+                    UNIQUE KEY `unique_floor_lab` (`floor_id`, `lab_name`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            print("✅ 'lab' table created.")
+        except Exception as e: print(f"❌ Failed to create 'lab': {e}")
+
+    # PC
+    cursor.execute("SHOW TABLES LIKE 'pc'")
+    if not cursor.fetchone():
+        try:
+            cursor.execute("""
+                CREATE TABLE `pc` (
+                    `pc_id` INT NOT NULL AUTO_INCREMENT,
+                    `lab_id` INT NOT NULL,
+                    `pc_number` VARCHAR(50) NOT NULL,
+                    `status` ENUM('ACTIVE', 'INACTIVE') DEFAULT 'ACTIVE',
+                    `ip_address` VARCHAR(45) DEFAULT NULL,
+                    PRIMARY KEY (`pc_id`),
+                    FOREIGN KEY (`lab_id`) REFERENCES `lab`(`lab_id`) ON DELETE CASCADE,
+                    UNIQUE KEY `unique_lab_pc` (`lab_id`, `pc_number`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            print("✅ 'pc' table created.")
+        except Exception as e: print(f"❌ Failed to create 'pc': {e}")
+
+    # Exam Table Modifications
+    print("Checking Exam mode configurations...")
+    if not column_exists('exam', 'mode'):
+        try:
+            cursor.execute("ALTER TABLE `exam` ADD COLUMN `mode` ENUM('ONLINE', 'CENTER') DEFAULT 'ONLINE'")
+            cursor.execute("ALTER TABLE `exam` ADD COLUMN `password` VARCHAR(255) DEFAULT NULL")
+            cursor.execute("ALTER TABLE `exam` ADD COLUMN `lab_id` INT DEFAULT NULL")
+            cursor.execute("ALTER TABLE `exam` ADD CONSTRAINT `fk_exam_lab` FOREIGN KEY (`lab_id`) REFERENCES `lab`(`lab_id`) ON DELETE SET NULL")
+            print("✅ Added 'mode', 'password', and 'lab_id' to exam table.")
+        except Exception as e: print(f"❌ Failed to update exam table for center modes: {e}")
+
+    # Student PC Assignment
+    cursor.execute("SHOW TABLES LIKE 'student_pc_assignment'")
+    if not cursor.fetchone():
+        try:
+            cursor.execute("""
+                CREATE TABLE `student_pc_assignment` (
+                    `id` INT NOT NULL AUTO_INCREMENT,
+                    `exam_id` INT NOT NULL,
+                    `student_id` INT NOT NULL,
+                    `pc_id` INT NOT NULL,
+                    `status` ENUM('ASSIGNED', 'ACTIVE', 'COMPLETED') DEFAULT 'ASSIGNED',
+                    PRIMARY KEY (`id`),
+                    FOREIGN KEY (`exam_id`) REFERENCES `exam`(`exam_id`) ON DELETE CASCADE,
+                    FOREIGN KEY (`student_id`) REFERENCES `student`(`student_id`) ON DELETE CASCADE,
+                    FOREIGN KEY (`pc_id`) REFERENCES `pc`(`pc_id`) ON DELETE CASCADE,
+                    UNIQUE KEY `unique_exam_student` (`exam_id`, `student_id`),
+                    UNIQUE KEY `unique_exam_pc` (`exam_id`, `pc_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            print("✅ 'student_pc_assignment' table created.")
+        except Exception as e: print(f"❌ Failed to create 'student_pc_assignment': {e}")
+
+    # --- Data Migration / Fixes ---
+    print("\n--- Running Data Migrations ---")
+    try:
+        # Fix exams that should be 'CENTER' but were saved as 'ONLINE'
+        cursor.execute("""
+            UPDATE exam 
+            SET mode = 'CENTER' 
+            WHERE mode = 'ONLINE' AND (lab_id IS NOT NULL OR password IS NOT NULL)
+        """)
+        if cursor.rowcount > 0:
+            print(f"✅ Fixed {cursor.rowcount} exams with inconsistent 'CENTER' mode data.")
+        else:
+            print("✅ No inconsistent exam modes found.")
+    except Exception as e:
+        print(f"❌ Failed to run data migration for exam modes: {e}")
 
     # --- Enforce Cascading Deletes ---
     print("--- Enforcing Cascading Deletes ---")

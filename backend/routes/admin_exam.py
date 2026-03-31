@@ -2,9 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Body, Request, Query
 from db import get_connection
 from security import get_current_user
 from .system_logger import log_action
+from passlib.context import CryptContext
 import mysql.connector
+from datetime import datetime
 
 router = APIRouter()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 @router.post("/admin/exams/create")
@@ -19,6 +22,10 @@ def create_exam(
     batch_year: int = Body(None),
     semester: int = Body(None),
     section_id: int = Body(None),
+    override_conflicts: bool = Body(False),
+    mode: str = Body("ONLINE"),
+    lab_id: int = Body(None),
+    password: str = Body(None),
     user=Depends(get_current_user),
 ):
     # 🔒 role guard
@@ -80,6 +87,17 @@ def create_exam(
             if not batch_year or not semester:
                 raise HTTPException(status_code=400, detail="Batch Year and Semester are required for BATCH scope")
 
+        # ✅ Validate, sanitize, and hash Center Mode Details
+        hashed_password = None
+        if mode == "CENTER":
+            if not password or not password.strip():
+                raise HTTPException(status_code=400, detail="A non-empty password is required for Center-based exams.")
+            if not lab_id:
+                raise HTTPException(status_code=400, detail="A lab is required for Center-based exams.")
+            hashed_password = pwd_context.hash(password.strip())
+        if mode == "ONLINE":
+            lab_id = None
+
         # 🚨 DUPLICATE CHECK (backend layer)
         cursor.execute(
             """
@@ -99,61 +117,71 @@ def create_exam(
 
         # ✅ Format date for MySQL (YYYY-MM-DD HH:MM)
         formatted_date = exam_date.replace("T", " ")
+        if len(formatted_date) == 16:
+            formatted_date += ":00"
+            
+        # ✅ Check for Past Date
+        exam_datetime = datetime.strptime(formatted_date, "%Y-%m-%d %H:%M:%S")
+        if exam_datetime < datetime.now():
+            raise HTTPException(status_code=400, detail="Cannot schedule an exam in the past.")
+            
+        # ✅ Resolve target sections for Overlap Check & Insertion
+        target_section_ids = []
+        if exam_scope == "SECTION":
+            target_section_ids.append(section_id)
+        elif exam_scope == "BATCH":
+            cursor.execute("SELECT section_id FROM section WHERE department_id = %s AND batch_year = %s AND semester = %s", (department_id, batch_year, semester))
+            target_section_ids = [row["section_id"] for row in cursor.fetchall()]
+        elif exam_scope == "DEPARTMENT":
+            cursor.execute("SELECT section_id FROM section WHERE department_id = %s", (department_id,))
+            target_section_ids = [row["section_id"] for row in cursor.fetchall()]
 
-        # ✅ insert exam
-        insert_query = """
-            INSERT INTO exam (
-                exam_name,
-                subject_id,
-                date,
-                duration,
-                total_marks,
-                status,
-                created_by_admin,
-                created_by_teacher,
-                department_id,
-                exam_scope,
-                batch_year, # Store for display purposes
-                semester # Store for display purposes
-            )
-            VALUES (%s, %s, %s, %s, %s, 'scheduled', %s, NULL, %s, %s, %s, %s)
-        """
+        if not target_section_ids:
+            raise HTTPException(status_code=400, detail="No sections found for the specified scope. Cannot create exam.")
+
+        # ✅ Check for overlapping exams in the selected sections
+        if not override_conflicts:
+            overlap_format_strings = ','.join(['%s'] * len(target_section_ids))
+            overlap_query = f"""
+                SELECT DISTINCT e.exam_name, sec.section_name 
+                FROM exam e
+                JOIN exam_section es ON e.exam_id = es.exam_id
+                JOIN section sec ON es.section_id = sec.section_id
+                WHERE es.section_id IN ({overlap_format_strings})
+                  AND e.status != 'completed'
+                  AND e.is_archived = 0
+                  AND e.date < DATE_ADD(%s, INTERVAL %s MINUTE)
+                  AND DATE_ADD(e.date, INTERVAL e.duration MINUTE) > %s
+            """
+            overlap_params = tuple(target_section_ids) + (formatted_date, duration, formatted_date)
+            cursor.execute(overlap_query, overlap_params)
+            overlaps = cursor.fetchall()
+            
+            if overlaps:
+                overlap_details = ", ".join([f"'{o['exam_name']}' (Section {o['section_name']})" for o in overlaps])
+                raise HTTPException(status_code=400, detail=f"Time conflict! The selected sections already have exams scheduled: {overlap_details}")
 
         cursor.execute(
-            insert_query,
+            """
+            INSERT INTO exam (
+                exam_name, subject_id, date, duration, total_marks, status, 
+                created_by_admin, department_id, exam_scope, batch_year, semester,
+                mode, lab_id, password_hash
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
             (
-                exam_name,
-                subject_id,
-                formatted_date,
-                duration,
-                total_marks,
-                user["user_id"],
-                department_id,
-                exam_scope,
-                batch_year,
-                semester
-            ),
+                exam_name, subject_id, formatted_date, duration, total_marks,
+                'scheduled', user["user_id"], department_id, exam_scope, batch_year, 
+                semester, mode, lab_id, hashed_password
+            )
         )
         new_exam_id = cursor.lastrowid
         log_action(user["user_id"], user["role"], department_id, f"Created Exam: {exam_name}", "exam", new_exam_id, ip_address=request.client.host)
         
-        # ✅ If Scope is SECTION, assign it immediately
-        if exam_scope == "SECTION" and section_id:
-            cursor.execute(
-                "INSERT INTO exam_section (exam_id, section_id) VALUES (%s, %s)",
-                (new_exam_id, section_id)
-            )
-        
-        # ✅ If Scope is BATCH, find all sections and assign
-        if exam_scope == "BATCH":
-            cursor.execute("""
-                SELECT section_id FROM section 
-                WHERE department_id = %s AND batch_year = %s AND semester = %s
-            """, (department_id, batch_year, semester))
-            sections_to_assign = cursor.fetchall()
-            if sections_to_assign:
-                values = [(new_exam_id, s['section_id']) for s in sections_to_assign]
-                cursor.executemany("INSERT INTO exam_section (exam_id, section_id) VALUES (%s, %s)", values)
+        # ✅ Insert into exam_section consistently for all scopes
+        if target_section_ids:
+            values = [(new_exam_id, s_id) for s_id in target_section_ids]
+            cursor.executemany("INSERT INTO exam_section (exam_id, section_id) VALUES (%s, %s)", values)
 
         conn.commit()
 
@@ -201,7 +229,7 @@ def get_exams(
         
         query = """
             SELECT 
-                e.exam_id, e.exam_name, sub.subject_name, e.date, e.duration, e.total_marks, e.created_by_admin, e.exam_type, e.parent_exam_id,
+                e.exam_id, e.exam_name, sub.subject_name, e.date, e.duration, e.total_marks, e.created_by_admin, e.exam_type, e.parent_exam_id, e.mode,
                 CASE
                     WHEN e.status = 'completed' THEN 'completed'
                     WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
@@ -244,6 +272,7 @@ def create_reexam_class(
     request: Request,
     exam_date: str = Body(...),
     duration: int = Body(...),
+    override_conflicts: bool = Body(False),
     user=Depends(get_current_user)
 ):
     if user["role"] != "admin":
@@ -259,6 +288,13 @@ def create_reexam_class(
             raise HTTPException(status_code=404, detail="Original exam not found")
 
         formatted_date = exam_date.replace("T", " ")
+        if len(formatted_date) == 16:
+            formatted_date += ":00"
+            
+        exam_datetime = datetime.strptime(formatted_date, "%Y-%m-%d %H:%M:%S")
+        if exam_datetime < datetime.now():
+            raise HTTPException(status_code=400, detail="Cannot schedule a re-exam in the past.")
+            
         new_name = f"Retake: {original['exam_name']}"
 
         # Create new exam instance
@@ -278,16 +314,41 @@ def create_reexam_class(
         # Copy Sections
         cursor.execute("SELECT section_id FROM exam_section WHERE exam_id = %s", (exam_id,))
         sections = cursor.fetchall()
-        if sections:
-            values = [(new_exam_id, s['section_id']) for s in sections]
+        target_section_ids = [s["section_id"] for s in sections]
+        
+        if target_section_ids:
+            # Check overlap for class re-exam
+            if not override_conflicts:
+                overlap_format_strings = ','.join(['%s'] * len(target_section_ids))
+                overlap_query = f"""
+                    SELECT DISTINCT e.exam_name, sec.section_name 
+                    FROM exam e
+                    JOIN exam_section es ON e.exam_id = es.exam_id
+                    JOIN section sec ON es.section_id = sec.section_id
+                    WHERE es.section_id IN ({overlap_format_strings})
+                      AND e.status != 'completed'
+                      AND e.is_archived = 0
+                      AND e.date < DATE_ADD(%s, INTERVAL %s MINUTE)
+                      AND DATE_ADD(e.date, INTERVAL e.duration MINUTE) > %s
+                """
+                overlap_params = tuple(target_section_ids) + (formatted_date, duration, formatted_date)
+                cursor.execute(overlap_query, overlap_params)
+                overlaps = cursor.fetchall()
+                
+                if overlaps:
+                    overlap_details = ", ".join([f"'{o['exam_name']}' (Section {o['section_name']})" for o in overlaps])
+                    raise HTTPException(status_code=400, detail=f"Time conflict! The selected sections already have exams scheduled: {overlap_details}")
+
+        if target_section_ids:
+            values = [(new_exam_id, s_id) for s_id in target_section_ids]
             cursor.executemany("INSERT INTO exam_section (exam_id, section_id) VALUES (%s, %s)", values)
 
         # Copy Questions
         cursor.execute("SELECT * FROM question WHERE exam_id = %s", (exam_id,))
         questions = cursor.fetchall()
         for q in questions:
-            cursor.execute("INSERT INTO question (exam_id, question_text, marks, question_type) VALUES (%s, %s, %s, %s)", 
-                           (new_exam_id, q['question_text'], q['marks'], q['question_type']))
+            cursor.execute("INSERT INTO question (exam_id, question_text, marks) VALUES (%s, %s, %s)", 
+                           (new_exam_id, q['question_text'], q['marks']))
             new_q_id = cursor.lastrowid
             
             cursor.execute("SELECT * FROM question_option WHERE question_id = %s", (q['question_id'],))
@@ -319,21 +380,25 @@ def create_reexam_students(
     cursor = conn.cursor()
     try:
         formatted_date = exam_date.replace("T", " ")
-        
-        # Verify exam exists
+        if len(formatted_date) == 16:
+            formatted_date += ":00"
+            
+        exam_datetime = datetime.strptime(formatted_date, "%Y-%m-%d %H:%M:%S")
+        if exam_datetime < datetime.now():
+            raise HTTPException(status_code=400, detail="Cannot schedule a re-exam in the past.")
+            
         cursor.execute("SELECT department_id FROM exam WHERE exam_id = %s", (exam_id,))
         exam = cursor.fetchone()
         if not exam:
-             raise HTTPException(status_code=404, detail="Exam not found")
+            raise HTTPException(status_code=404, detail="Exam not found")
 
-        # Insert into exam_retake
         values = [(exam_id, sid, formatted_date, duration, user["user_id"], 'scheduled') for sid in student_ids]
         cursor.executemany("""
             INSERT INTO exam_retake (exam_id, student_id, retake_date, retake_duration, created_by, status)
             VALUES (%s, %s, %s, %s, %s, %s)
         """, values)
-
-        log_action(user["user_id"], "admin", exam[0], f"Scheduled Student Re-Exam for {len(student_ids)} students", "exam", exam_id, ip_address=request.client.host)
+        
+        log_action(user["user_id"], "admin", exam['department_id'], f"Scheduled Student Re-Exam for {len(student_ids)} students", "exam", exam_id, ip_address=request.client.host)
         conn.commit()
         return {"message": "Student Re-Exams scheduled successfully"}
     finally:
@@ -415,18 +480,6 @@ def get_exam_questions_admin(
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    # Validate Options
-    if len(options) < 2:
-        raise HTTPException(status_code=400, detail="At least 2 options are required")
-    if sum(1 for opt in options if opt["is_correct"]) != 1:
-        raise HTTPException(status_code=400, detail="Exactly one correct option must be selected")
-    if any(not opt["text"].strip() for opt in options):
-        raise HTTPException(status_code=400, detail="Option text cannot be empty")
-
-    option_texts = [opt["text"].strip() for opt in options]
-    if len(option_texts) != len(set(option_texts)):
-        raise HTTPException(status_code=400, detail="Duplicate options provided. Each option must be unique.")
-
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
 
@@ -456,12 +509,21 @@ def get_exam_questions_admin(
         
         questions = cursor.fetchall()
 
+        # Get exam total marks and sum of question marks
+        cursor.execute("SELECT total_marks FROM exam WHERE exam_id = %s", (exam_id,))
+        exam_details = cursor.fetchone()
+        
+        cursor.execute("SELECT SUM(marks) as total FROM question WHERE exam_id = %s", (exam_id,))
+        marks_sum = cursor.fetchone()
+
         return {
             "questions": questions,
             "total": total,
             "page": page,
             "limit": limit,
-            "total_pages": (total + limit - 1) // limit if limit > 0 else 0
+            "total_pages": (total + limit - 1) // limit if limit > 0 else 0,
+            "exam_total_marks": exam_details["total_marks"] if exam_details else 0,
+            "total_marks_used": marks_sum["total"] if marks_sum and marks_sum["total"] else 0
         }
     finally:
         cursor.close()
@@ -678,6 +740,7 @@ def get_exam(exam_id: int, user=Depends(get_current_user)):
 @router.put("/admin/exams/{exam_id}")
 def update_exam(
     exam_id: int,
+    request: Request,
     exam_name: str = Body(...),
     subject_id: int = Body(...),
     duration: int = Body(...),
@@ -688,6 +751,10 @@ def update_exam(
     batch_year: int = Body(None),
     semester: int = Body(None),
     assigned_teacher_id: int = Body(None),
+    override_conflicts: bool = Body(False),
+    mode: str = Body("ONLINE"),
+    lab_id: int = Body(None),
+    password: str = Body(None),
     user=Depends(get_current_user)
 ):
     if user["role"] != "admin":
@@ -705,12 +772,73 @@ def update_exam(
         admin_dept = cursor.fetchone()["department_id"]
         
         formatted_date = exam_date.replace("T", " ")
+        if len(formatted_date) == 16:
+            formatted_date += ":00"
+            
+        exam_datetime = datetime.strptime(formatted_date, "%Y-%m-%d %H:%M:%S")
+        if exam_datetime < datetime.now():
+            raise HTTPException(status_code=400, detail="Cannot schedule an exam in the past.")
+            
+        # ✅ Resolve target sections to update mappings and check overlap
+        target_section_ids = []
+        if exam_scope == "SECTION":
+            if not section_id:
+                raise HTTPException(status_code=400, detail="Section ID is required for SECTION scope")
+            target_section_ids.append(section_id)
+        elif exam_scope == "BATCH":
+            cursor.execute("SELECT section_id FROM section WHERE department_id = %s AND batch_year = %s AND semester = %s", (admin_dept, batch_year, semester))
+            target_section_ids = [row["section_id"] for row in cursor.fetchall()]
+        elif exam_scope == "DEPARTMENT":
+            cursor.execute("SELECT section_id FROM section WHERE department_id = %s", (admin_dept,))
+            target_section_ids = [row["section_id"] for row in cursor.fetchall()]
+
+        if not target_section_ids:
+            raise HTTPException(status_code=400, detail="No sections found for the specified scope.")
+            
+        # ✅ Validate, sanitize, and hash Center Mode Details
+        hashed_password = None
+        if mode == "CENTER":
+            if not password or not password.strip():
+                raise HTTPException(status_code=400, detail="A non-empty password is required for Center-based exams.")
+            if not lab_id:
+                raise HTTPException(status_code=400, detail="A lab is required for Center-based exams.")
+            password = password.strip()
+            if not password.startswith('$2b$'):
+                hashed_password = pwd_context.hash(password)
+            else:
+                hashed_password = password # Assume it's the old hash being re-submitted
+        if mode == "ONLINE":
+            lab_id = None
+            hashed_password = None
+
+        # ✅ Check for overlapping exams (excluding current exam)
+        if not override_conflicts:
+            overlap_format_strings = ','.join(['%s'] * len(target_section_ids))
+            overlap_query = f"""
+                SELECT DISTINCT e.exam_name, sec.section_name 
+                FROM exam e
+                JOIN exam_section es ON e.exam_id = es.exam_id
+                JOIN section sec ON es.section_id = sec.section_id
+                WHERE es.section_id IN ({overlap_format_strings})
+                  AND e.exam_id != %s
+                  AND e.status != 'completed'
+                  AND e.is_archived = 0
+                  AND e.date < DATE_ADD(%s, INTERVAL %s MINUTE)
+                  AND DATE_ADD(e.date, INTERVAL e.duration MINUTE) > %s
+            """
+            overlap_params = tuple(target_section_ids) + (exam_id, formatted_date, duration, formatted_date)
+            cursor.execute(overlap_query, overlap_params)
+            overlaps = cursor.fetchall()
+            
+            if overlaps:
+                overlap_details = ", ".join([f"'{o['exam_name']}' (Section {o['section_name']})" for o in overlaps])
+                raise HTTPException(status_code=400, detail=f"Time conflict! Scheduled exams overlap: {overlap_details}")
         
         # Base update query
         update_sql = """
-            UPDATE exam SET exam_name=%s, subject_id=%s, duration=%s, total_marks=%s, date=%s, exam_scope=%s, batch_year=%s, semester=%s 
+            UPDATE exam SET exam_name=%s, subject_id=%s, duration=%s, total_marks=%s, date=%s, exam_scope=%s, batch_year=%s, semester=%s, mode=%s, lab_id=%s, password_hash=%s 
         """
-        params = [exam_name, subject_id, duration, total_marks, formatted_date, exam_scope, batch_year, semester]
+        params = [exam_name, subject_id, duration, total_marks, formatted_date, exam_scope, batch_year, semester, mode, lab_id, hashed_password]
 
         # Handle Reassignment to a Teacher
         if assigned_teacher_id is not None:
@@ -724,6 +852,15 @@ def update_exam(
         params.extend([exam_id, admin_dept])
 
         cursor.execute(update_sql, tuple(params))
+        
+        # Update Sections (Delete old, insert new)
+        cursor.execute("DELETE FROM exam_section WHERE exam_id = %s", (exam_id,))
+        if target_section_ids:
+            values = [(exam_id, sec_id, user["user_id"] if assigned_teacher_id is None else None) for sec_id in target_section_ids]
+            cursor.executemany("INSERT INTO exam_section (exam_id, section_id, assigned_by_admin) VALUES (%s, %s, %s)", values)
+
+        log_action(user["user_id"], user["role"], admin_dept, f"Updated Exam: {exam_name}", "exam", exam_id, ip_address=request.client.host)
+        
         conn.commit()
         return {"message": "Exam updated successfully"}
     finally:
@@ -731,10 +868,10 @@ def update_exam(
         conn.close()
 
 @router.post("/admin/exams/{exam_id}/publish")
-def publish_exam(exam_id: int, request: Request, user=Depends(get_current_user)):
+def publish_exam_admin(exam_id: int, request: Request, user=Depends(get_current_user)):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
-
+        
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
 
@@ -754,11 +891,10 @@ def publish_exam(exam_id: int, request: Request, user=Depends(get_current_user))
         if abs(float(total_q_marks) - float(exam["total_marks"])) > 0.01:
             raise HTTPException(
                 status_code=400, 
-                detail=f"Marks mismatch! Exam Total: {exam['total_marks']}, Questions Total: {total_q_marks}. Please adjust questions."
+                detail=f"Marks mismatch! Exam Total: {exam['total_marks']}, Questions Total: {total_q_marks}."
             )
-
-        # 4. Publish
-        cursor.execute("UPDATE exam SET status = 'active' WHERE exam_id = %s", (exam_id,))
+            
+        cursor.execute("UPDATE exam SET status = 'active', date = NOW() WHERE exam_id = %s", (exam_id,))
         log_action(user["user_id"], user["role"], exam["department_id"], f"Published Exam ID: {exam_id}", "exam", exam_id, ip_address=request.client.host)
 
         conn.commit()
@@ -779,16 +915,17 @@ def get_exam_results(exam_id: int, user=Depends(get_current_user)):
     try:
         # Verify ownership/department
         cursor.execute("SELECT department_id FROM admin WHERE admin_id = %s", (user["user_id"],))
-        admin_dept = cursor.fetchone()["department_id"]
-
+        admin_row = cursor.fetchone()
+        if not admin_row:
+            raise HTTPException(status_code=400, detail="Admin not mapped to department")
+            
         cursor.execute("SELECT department_id FROM exam WHERE exam_id = %s", (exam_id,))
         exam = cursor.fetchone()
-        if not exam or exam["department_id"] != admin_dept:
-             raise HTTPException(status_code=404, detail="Exam not found or access denied")
-
-        # Fetch results
+        if not exam or exam["department_id"] != admin_row["department_id"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+            
         cursor.execute("""
-            SELECT r.student_id, s.name, s.usn, r.total_marks, r.result_status, r.generated_time
+            SELECT r.result_id, s.student_id, s.name, s.usn, r.total_marks, r.result_status, r.generated_time
             FROM result r
             JOIN student s ON r.student_id = s.student_id
             WHERE r.exam_id = %s

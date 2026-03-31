@@ -11,6 +11,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadExams();
     populateBatchYearDropdown();
     populateExamScopeDropdowns();
+    loadLabHierarchy();
     
     // Load Lists
     loadSectionsList();
@@ -54,6 +55,16 @@ document.addEventListener("DOMContentLoaded", () => {
         // Initialize state
         const initialEvent = new Event('change');
         scopeSelect.dispatchEvent(initialEvent);
+    }
+
+    // Center Exam mode listeners
+    const modeSelect = document.getElementById('exam-mode');
+    if (modeSelect) {
+        modeSelect.addEventListener('change', toggleExamMode);
+        const blockSelect = document.getElementById('exam-block');
+        if (blockSelect) blockSelect.addEventListener('change', handleBlockChange);
+        const floorSelect = document.getElementById('exam-floor');
+        if (floorSelect) floorSelect.addEventListener('change', handleFloorChange);
     }
 
     // Load questions when exam is selected
@@ -123,7 +134,6 @@ function showSection(sectionName) {
     }
     if (sectionName === 'violations') {
         loadViolationAnalytics();
-        loadExamsForViolationFilter();
     }
     if (sectionName === 'logs') {
         loadSystemLogs();
@@ -347,6 +357,21 @@ async function handleFormSubmit(event, endpoint) {
     const formData = new FormData(form);
     const data = Object.fromEntries(formData.entries());
 
+    // Handle multiple section_ids for bulk assignments
+    if (endpoint.includes('assignments')) {
+        const sectionSelect = form.querySelector('#assign-section');
+        if (sectionSelect && sectionSelect.multiple) {
+            if (!data.assignment_id) {
+                // Bulk Create
+                data.section_ids = Array.from(sectionSelect.selectedOptions).map(opt => parseInt(opt.value));
+                delete data.section_id;
+            } else {
+                // Edit Single
+                data.section_id = parseInt(sectionSelect.value);
+            }
+        }
+    }
+
     // Check for Edit Mode
     let finalEndpoint = endpoint;
     let method = "POST";
@@ -372,12 +397,15 @@ async function handleFormSubmit(event, endpoint) {
     }
 
     // Convert numeric strings to integers (Backend expects integers for IDs and duration)
-    const numericFields = ['department_id', 'subject_id', 'duration', 'exam_id', 'section_id', 'semester', 'total_marks', 'batch_year'];
+    const numericFields = ['department_id', 'subject_id', 'duration', 'exam_id', 'section_id', 'semester', 'total_marks', 'batch_year', 'lab_id'];
     for (let key in data) {
         if (numericFields.includes(key)) {
             data[key] = parseInt(data[key]);
         }
     }
+
+    // Handle boolean field for exam overrides
+    if (data.override_conflicts) data.override_conflicts = (data.override_conflicts === 'true' || data.override_conflicts === 'on');
 
     try {
         const result = await apiRequest(finalEndpoint, method, data);
@@ -487,12 +515,14 @@ async function handleSaveQuestion(event) {
 async function loadQuestionsForExam(examId, page = 1) {
     const container = document.getElementById('questions-list');
     const paginationContainer = document.getElementById('pagination-controls');
+    const summaryContainer = document.getElementById('marks-summary-admin');
 
     if (!container) return;
     
     if (!examId) {
         container.innerHTML = '<p style="color: #666;">Select an exam to view questions.</p>';
         if (paginationContainer) paginationContainer.innerHTML = '';
+        if (summaryContainer) summaryContainer.innerHTML = '';
         return;
     }
 
@@ -500,10 +530,25 @@ async function loadQuestionsForExam(examId, page = 1) {
 
     try {
         const response = await apiRequest(`/admin/exams/${examId}/questions?page=${page}&limit=5`);
-        const questions = response.questions;
-        const totalPages = response.total_pages;
+        const { questions, total_pages, exam_total_marks, total_marks_used } = response || {};
         
-        if (questions.length === 0) {
+        if (typeof exam_total_marks === 'undefined' || typeof total_marks_used === 'undefined') {
+            throw new Error("Incomplete marks data from server.");
+        }
+
+        if (summaryContainer) {
+            const remaining = exam_total_marks - total_marks_used;
+            summaryContainer.innerHTML = `Allocated: ${total_marks_used || 0} / ${exam_total_marks} | <span style="color: ${remaining < 0 ? '#e53e3e' : '#28a745'}">Remaining: ${remaining.toFixed(2)}</span>`;
+            if (remaining < 0) {
+                summaryContainer.style.borderColor = '#e53e3e';
+                summaryContainer.style.backgroundColor = '#fee2e2';
+            } else {
+                summaryContainer.style.borderColor = '#bee3f8';
+                summaryContainer.style.backgroundColor = '#ebf8ff';
+            }
+        }
+        
+        if (!questions || questions.length === 0) {
             container.innerHTML = '<p>No questions added yet.</p>';
             if (paginationContainer) paginationContainer.innerHTML = '';
             return;
@@ -529,6 +574,7 @@ async function loadQuestionsForExam(examId, page = 1) {
 
         // Render Pagination Controls
         if (paginationContainer) {
+            const totalPages = total_pages || 1;
             let paginationHtml = '';
             if (totalPages > 1) {
                 // Previous Button
@@ -690,6 +736,146 @@ function downloadStudentTemplate() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+}
+
+// --- Center-Based Exam UI Logic ---
+let labHierarchy = [];
+
+async function loadLabHierarchy() {
+    try {
+        labHierarchy = await apiRequest('/infrastructure/labs');
+        populateBlockDropdown();
+    } catch (error) {
+        console.error("Failed to load infrastructure data", error);
+    }
+}
+
+function populateBlockDropdown() {
+    const blockSelect = document.getElementById('exam-block');
+    if (!blockSelect) return;
+    
+    blockSelect.innerHTML = '<option value="">Select Block</option>';
+    const uniqueBlocks = [...new Map(labHierarchy.map(item => [item.block_id, {id: item.block_id, name: item.block_name}])).values()];
+    
+    uniqueBlocks.forEach(block => {
+        blockSelect.appendChild(new Option(block.name, block.id));
+    });
+}
+
+function handleBlockChange() {
+    const blockId = document.getElementById('exam-block').value;
+    const floorSelect = document.getElementById('exam-floor');
+    const labSelect = document.getElementById('exam-lab');
+    if (!floorSelect || !labSelect) return;
+    
+    floorSelect.innerHTML = '<option value="">Select Floor</option>';
+    labSelect.innerHTML = '<option value="">Select Lab</option>';
+    if (!blockId) return;
+    
+    const floorsInBlock = labHierarchy.filter(item => item.block_id == blockId);
+    const uniqueFloors = [...new Map(floorsInBlock.map(item => [item.floor_id, {id: item.floor_id, number: item.floor_number}])).values()];
+    uniqueFloors.forEach(floor => floorSelect.appendChild(new Option(floor.number === -1 ? 'Basement' : floor.number === 0 ? 'Ground Floor' : `Floor ${floor.number}`, floor.id)));
+}
+
+function handleFloorChange() {
+    const floorId = document.getElementById('exam-floor').value;
+    const labSelect = document.getElementById('exam-lab');
+    if (!labSelect) return;
+    
+    labSelect.innerHTML = '<option value="">Select Lab</option>';
+    if (!floorId) return;
+    
+    const labsInFloor = labHierarchy.filter(item => item.floor_id == floorId);
+    const uniqueLabs = [...new Map(labsInFloor.map(item => [item.lab_id, {id: item.lab_id, name: item.lab_name}])).values()];
+    uniqueLabs.forEach(lab => labSelect.appendChild(new Option(lab.name, lab.id)));
+}
+
+function toggleExamMode() {
+    const mode = document.getElementById('exam-mode').value;
+    const centerContainer = document.getElementById('center-exam-container');
+    if (!centerContainer) return;
+    
+    centerContainer.style.display = mode === 'CENTER' ? 'flex' : 'none';
+    document.getElementById('exam-lab').required = mode === 'CENTER';
+    document.getElementById('exam-password').required = mode === 'CENTER';
+}
+
+// --- PC Assignment Logic ---
+let currentPCOptions = [];
+
+async function openAssignPCModal(examId) {
+    document.getElementById('assign-pc-exam-id').value = examId;
+    const tbody = document.getElementById('assign-pc-tbody');
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Loading...</td></tr>';
+    document.getElementById('assign-pc-modal').style.display = 'block';
+
+    try {
+        const data = await apiRequest(`/exams/${examId}/center-details`);
+        
+        document.getElementById('assign-pc-student-count').textContent = data.students.length;
+        document.getElementById('assign-pc-count').textContent = data.pcs.length;
+        currentPCOptions = data.pcs;
+
+        if (data.students.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">No students assigned to this exam sections.</td></tr>';
+            return;
+        }
+
+        let optionsHtml = '<option value="">-- Select PC --</option>';
+        data.pcs.forEach(pc => {
+            optionsHtml += `<option value="${pc.pc_id}">${pc.pc_number} (${pc.status})</option>`;
+        });
+
+        tbody.innerHTML = data.students.map(s => `
+            <tr class="pc-assignment-row" data-student-id="${s.student_id}">
+                <td><strong>${s.name}</strong></td>
+                <td>${s.usn}</td>
+                <td>${s.section_name}</td>
+                <td>
+                    <select class="pc-select" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid #ccc;">
+                        ${optionsHtml}
+                    </select>
+                </td>
+            </tr>
+        `).join('');
+
+        document.querySelectorAll('.pc-assignment-row').forEach(row => {
+            const studentId = row.getAttribute('data-student-id');
+            if (data.assignments[studentId]) row.querySelector('.pc-select').value = data.assignments[studentId];
+        });
+    } catch (error) {
+        closeAssignPCModal();
+        alert(error.message);
+    }
+}
+
+function closeAssignPCModal() { document.getElementById('assign-pc-modal').style.display = 'none'; }
+
+function autoAssignPCs() {
+    let pcIndex = 0;
+    document.querySelectorAll('.pc-assignment-row .pc-select').forEach(select => {
+        if (pcIndex < currentPCOptions.length) select.value = currentPCOptions[pcIndex++].pc_id;
+        else select.value = "";
+    });
+}
+
+async function submitPCAssignments() {
+    const examId = document.getElementById('assign-pc-exam-id').value;
+    const assignments = [], usedPcs = new Set();
+
+    for (let row of document.querySelectorAll('.pc-assignment-row')) {
+        const pcId = row.querySelector('.pc-select').value;
+        if (pcId) {
+            if (usedPcs.has(pcId)) return alert("Error: Multiple students cannot be assigned to the same PC.");
+            usedPcs.add(pcId);
+            assignments.push({ student_id: parseInt(row.getAttribute('data-student-id')), pc_id: parseInt(pcId) });
+        }
+    }
+    if (assignments.length === 0 && !confirm("No PCs assigned. Save anyway and clear existing?")) return;
+    try {
+        alert((await apiRequest(`/exams/${examId}/assign-pc`, 'POST', assignments)).message);
+        closeAssignPCModal();
+    } catch (error) { alert("Error: " + error.message); }
 }
 
 // Load Teachers into Dropdown (for Assignment)
@@ -960,8 +1146,8 @@ async function loadExamsList() {
                 `;
             } else if (e.status === 'active') {
                 actionsHtml = `
-                    <button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>
-                    <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                    <button onclick="viewExamResults(${e.exam_id})" class="btn-edit" style="background-color: #6f42c1; color: white;">Results</button>
+                    ${e.mode === 'CENTER' ? `<button onclick="openAssignPCModal(${e.exam_id})" class="btn-edit" style="background-color: #4F46E5; color: white;" title="Assign Center PCs">PCs</button>` : ''}
                     <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
                 `;
             } else {
@@ -969,6 +1155,7 @@ async function loadExamsList() {
                     <button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>
                     <button onclick="publishExam(${e.exam_id})" class="btn-edit" style="background-color: #17a2b8; color: white;">Publish</button>
                     <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                    ${e.mode === 'CENTER' ? `<button onclick="openAssignPCModal(${e.exam_id})" class="btn-edit" style="background-color: #4F46E5; color: white;" title="Assign Center PCs">PCs</button>` : ''}
                     <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
                 `;
             }
@@ -1057,15 +1244,16 @@ async function loadAdminExams() {
                 `;
             } else if (e.status === 'active') {
                 actionsHtml = `
-                    <button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>
-                    <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                    <button onclick="viewExamResults(${e.exam_id})" class="btn-edit" style="background-color: #6f42c1; color: white;">Results</button>
+                    ${e.mode === 'CENTER' ? `<button onclick="openAssignPCModal(${e.exam_id})" class="btn-edit" style="background-color: #4F46E5; color: white;" title="Assign Center PCs">PCs</button>` : ''}
                     <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
                 `;
             } else {
                 actionsHtml = `
-                    <button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>
+                    ${isMyExam ? `<button onclick="editEntity('exam', ${e.exam_id})" class="btn-edit">Edit</button>` : ''}
                     <button onclick="publishExam(${e.exam_id})" class="btn-edit" style="background-color: #17a2b8; color: white;">Publish</button>
                     <button onclick="goToAddQuestions(${e.exam_id})" class="btn-edit" style="background-color: #28a745; color: white;" title="Add/View Questions">+Q</button>
+                    ${e.mode === 'CENTER' ? `<button onclick="openAssignPCModal(${e.exam_id})" class="btn-edit" style="background-color: #4F46E5; color: white;" title="Assign Center PCs">PCs</button>` : ''}
                     <button onclick="deleteEntity('exams', ${e.exam_id})" class="btn-delete">Delete</button>
                 `;
             }
@@ -1121,6 +1309,7 @@ function goToAddQuestions(examId) {
 async function openReExamModal(examId, duration) {
     document.getElementById('re-exam-modal').style.display = 'block';
     document.getElementById('re-exam-id').value = examId;
+    document.body.style.overflow = 'hidden';
     document.getElementById('re-exam-duration').value = duration;
     
     // Load students for this exam (from results or sections)
@@ -1151,6 +1340,7 @@ async function openReExamModal(examId, duration) {
 
 function closeReExamModal() {
     document.getElementById('re-exam-modal').style.display = 'none';
+    document.body.style.overflow = '';
 }
 
 function toggleReExamType() {
@@ -1163,8 +1353,9 @@ async function submitReExam() {
     const type = document.getElementById('re-exam-type').value;
     const date = document.getElementById('re-exam-date').value;
     const duration = document.getElementById('re-exam-duration').value;
+    const override = document.getElementById('re-exam-override').checked;
     
-    const payload = { exam_date: date, duration: parseInt(duration) };
+    const payload = { exam_date: date, duration: parseInt(duration), override_conflicts: override };
     let url = `/admin/exams/${examId}/re-exam/class`;
 
     if (type === 'students') {
@@ -1414,12 +1605,36 @@ async function editEntity(type, id) {
                 }
             }
 
+            document.getElementById('exam-mode').value = data.mode || 'ONLINE';
+            toggleExamMode();
+            if (data.mode === 'CENTER') {
+                const lab = labHierarchy.find(l => l.lab_id == data.lab_id);
+                if (lab) {
+                    document.getElementById('exam-block').value = lab.block_id;
+                    handleBlockChange();
+                    document.getElementById('exam-floor').value = lab.floor_id;
+                    handleFloorChange();
+                    document.getElementById('exam-lab').value = lab.lab_id;
+                }
+                document.getElementById('exam-password').value = data.password_hash || '';
+            }
+
             toggleEditMode('exam', true);
         } else if (type === 'assignment') {
             document.querySelector('input[name="assignment_id"]').value = data.assignment_id;
             document.getElementById('assign-teacher').value = data.teacher_id;
             document.getElementById('assign-subject').value = data.subject_id;
-            document.getElementById('assign-section').value = data.section_id;
+            
+            const sectionSelect = document.getElementById('assign-section');
+            if (sectionSelect) {
+                if (sectionSelect.multiple) {
+                    Array.from(sectionSelect.options).forEach(opt => {
+                        opt.selected = (parseInt(opt.value) === data.section_id);
+                    });
+                } else {
+                    sectionSelect.value = data.section_id;
+                }
+            }
             
             toggleEditMode('assignment', true);
         }
@@ -1591,14 +1806,14 @@ async function loadViolationAnalytics() {
     container.innerHTML = '<div class="spinner"></div>';
     loadViolationHistory();
     const status = document.getElementById('violation-filter-status').value;
-    const examId = document.getElementById('violation-filter-exam').value;
+    const examSearch = document.getElementById('violation-filter-exam').value;
     const type = document.getElementById('violation-filter-type').value;
     
     try {
         let url = '/admin/violations/stats';
         const params = new URLSearchParams();
         if (status) params.append('status', status);
-        if (examId) params.append('exam_id', examId);
+        if (examSearch) params.append('exam_search', examSearch);
         if (type) params.append('violation_type', type);
         if ([...params].length > 0) url += `?${params.toString()}`;
 
@@ -1693,7 +1908,7 @@ async function loadViolationHistory(page = 1) {
     
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Loading...</td></tr>';
     const status = document.getElementById('history-filter-status').value;
-    const examId = document.getElementById('violation-filter-exam').value;
+    const examSearch = document.getElementById('violation-filter-exam').value;
     const search = document.getElementById('history-filter-search').value;
     const startDate = document.getElementById('history-filter-start-date').value;
     const endDate = document.getElementById('history-filter-end-date').value;
@@ -1702,13 +1917,14 @@ async function loadViolationHistory(page = 1) {
     try {
         const queryParams = new URLSearchParams({ page, limit: 10 });
         if (status) queryParams.append('status', status);
-        if (examId) queryParams.append('exam_id', examId);
+        if (examSearch) queryParams.append('exam_search', examSearch);
         if (search) queryParams.append('search', search);
         if (startDate) queryParams.append('start_date', startDate);
         if (endDate) queryParams.append('end_date', endDate);
         if (type) queryParams.append('violation_type', type);
 
         const data = await apiRequest(`/admin/violations/history?${queryParams.toString()}`);
+        const totalPages = data.total_pages || 1;
         
         if (data.history.length === 0) {
             tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No history found.</td></tr>';
@@ -1728,7 +1944,17 @@ async function loadViolationHistory(page = 1) {
             </tr>
         `).join('');
 
-        pagination.innerHTML = `<button onclick="loadViolationHistory(${page-1})" ${page===1?'disabled':''}>&laquo;</button> <span style="padding:5px;">Page ${page}</span> <button onclick="loadViolationHistory(${page+1})" ${page===data.total_pages?'disabled':''}>&raquo;</button>`;
+        if (pagination) {
+            let paginationHtml = '';
+            if (totalPages > 1) {
+                paginationHtml += `<button type="button" onclick="loadViolationHistory(${page - 1})" ${page === 1 ? 'disabled' : ''}>&laquo;</button>`;
+                for (let i = 1; i <= totalPages; i++) {
+                    paginationHtml += `<button type="button" onclick="loadViolationHistory(${i})" class="${i === page ? 'active' : ''}">${i}</button>`;
+                }
+                paginationHtml += `<button type="button" onclick="loadViolationHistory(${page + 1})" ${page === totalPages ? 'disabled' : ''}>&raquo;</button>`;
+            }
+            pagination.innerHTML = paginationHtml;
+        }
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="7" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
     }
@@ -1810,82 +2036,104 @@ function renderViolationByExamChart(data) {
     });
 }
 
-async function loadExamsForViolationFilter() {
-    const select = document.getElementById('violation-filter-exam');
-    if (!select || select.options.length > 1) return;
-    try {
-        const exams = await apiRequest('/admin/exams');
-        exams.forEach(e => {
-            select.appendChild(new Option(e.exam_name, e.exam_id));
-        });
-    } catch (error) {
-        console.error("Failed to load exams for filter", error);
-    }
-}
-
 let currentViolationId = null;
 
 async function viewEvidence(id) {
     currentViolationId = id;
     const modal = document.getElementById('evidence-modal');
     const content = document.getElementById('evidence-content');
-    const actions = document.getElementById('evidence-actions');
-    
-    modal.style.display = 'block';
+
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+    document.body.style.overflow = 'hidden';
+
+    const modalContent = content.closest('.modal-content');
+    if (modalContent) {
+        modalContent.style.maxWidth = '800px';
+        modalContent.style.width = '90%';
+        modalContent.style.maxHeight = '90vh';
+        modalContent.style.overflowY = 'auto';
+        content.style.padding = '24px';
+    }
+
     content.innerHTML = '<div class="spinner"></div>';
 
     try {
         const v = await apiRequest(`/admin/violations/${id}`);
-        
-        content.innerHTML = `
-            <p><strong>Student:</strong> ${v.student_name} (${v.usn})</p>
-            <p><strong>Exam:</strong> ${v.exam_name}</p>
-            <p><strong>Violation Type:</strong> <span style="color:#DC2626; font-weight:bold;">${v.violation_type}</span></p>
-            <p><strong>Time:</strong> ${new Date(v.timestamp).toLocaleString()}</p>
-            <p><strong>Confidence Score:</strong> ${v.confidence_score}</p>
-            <p><strong>Status:</strong> <span style="font-weight:bold; color:${v.review_status === 'Resolved' ? 'green' : v.review_status === 'Dismissed' ? 'gray' : 'red'}">${v.review_status}</span></p>
-            
-            ${v.remarks ? `
-                <div style="margin-top:10px; padding:10px; background:#fff3cd; border-left: 4px solid #ffc107; border-radius:4px;">
-                    <strong>Remarks:</strong><br>${v.remarks}
-                </div>
-            ` : ''}
 
-            ${v.question_text ? `<div style="margin-top:10px; padding:10px; background:#f8f9fa; border-radius:4px;"><strong>Related Question:</strong><br>${v.question_text}</div>` : ''}
-            
-            <div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
-                <h4 style="margin-top: 0; color: #2c3e50; font-size: 1rem;">Evidence</h4>
+        const getStatusBadge = (status) => {
+            let color, bgColor;
+            switch (status) {
+                case 'Resolved':
+                    color = '#16A34A'; bgColor = '#DCFCE7'; break;
+                case 'Dismissed':
+                    color = '#64748B'; bgColor = '#F1F5F9'; break;
+                case 'Pending':
+                case 'Under Review':
+                default:
+                    color = '#B45309'; bgColor = '#FEF3C7'; break;
+            }
+            return `<span style="color: ${color}; background-color: ${bgColor}; padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">${status}</span>`;
+        };
+
+        let contentHtml = `
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px 24px; margin-bottom: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 24px;">
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Student</label><div style="font-weight: 600; color: #111827;">${v.student_name} (${v.usn})</div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Exam</label><div style="font-weight: 600; color: #111827;">${v.exam_name}</div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Violation Type</label><div><span style="color: #991B1B; background-color: #FEE2E2; padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">${v.violation_type}</span></div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Status</label><div>${getStatusBadge(v.review_status)}</div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Time</label><div style="font-size: 0.9rem; color: #374151;">${new Date(v.timestamp).toLocaleString()}</div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Confidence</label><div style="font-size: 0.9rem; color: #374151;">${v.confidence_score || 'N/A'}</div></div>
+            </div>
+
+            ${v.question_text ? `<div style="margin-bottom: 24px;"><h4 style="font-size: 1rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 8px;">Related Question</h4><p style="background-color: #f9fafb; border: 1px solid #e5e7eb; padding: 12px; border-radius: 6px; margin: 0; font-size: 0.9rem; color: #374151;">${v.question_text}</p></div>` : ''}
+
+            <div style="margin-bottom: 24px;">
+                <h4 style="font-size: 1rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 12px;">Evidence</h4>
                 ${v.evidence && v.evidence.length > 0 ? 
                     v.evidence.map(e => `
-                        <div style="margin-bottom: 15px; background: #f8f9fa; padding: 10px; border-radius: 6px;">
-                            <div style="font-size: 0.85rem; color: #666; margin-bottom: 8px;">Captured: ${new Date(e.captured_time).toLocaleTimeString()}</div>
-                            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <div style="border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 16px; overflow: hidden;">
+                            <div style="background-color: #f9fafb; padding: 8px 12px; font-size: 0.8rem; color: #6b7280; border-bottom: 1px solid #e5e7eb;">Captured: ${new Date(e.captured_time).toLocaleTimeString()}</div>
+                            <div style="display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; justify-content: center;">
                                 ${e.camera_image_path ? `
-                                    <div style="flex: 1; min-width: 150px;">
-                                        <div style="font-size: 0.8rem; font-weight: 600; margin-bottom: 4px;">Camera</div>
-                                        <img src="${e.camera_image_path}" style="width: 100%; border-radius: 4px; border: 1px solid #ddd;" alt="Camera Evidence">
+                                    <div style="flex: 1; min-width: 200px; text-align: center;">
+                                        <label style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #4b5563; display: block;">Camera</label>
+                                        <img src="${e.camera_image_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Camera Evidence">
                                     </div>
                                 ` : ''}
                                 ${e.screenshot_path ? `
-                                    <div style="flex: 1; min-width: 150px;">
-                                        <div style="font-size: 0.8rem; font-weight: 600; margin-bottom: 4px;">Screenshot</div>
-                                        <img src="${e.screenshot_path}" style="width: 100%; border-radius: 4px; border: 1px solid #ddd;" alt="Screenshot Evidence">
+                                    <div style="flex: 1; min-width: 200px; text-align: center;">
+                                        <label style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #4b5563; display: block;">Screenshot</label>
+                                        <img src="${e.screenshot_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Screenshot Evidence">
                                     </div>
                                 ` : ''}
                             </div>
                         </div>
                     `).join('') 
-                    : '<p style="color: #666; font-style: italic;">No visual evidence available.</p>'
+                    : `<div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px;"><i class="fas fa-image" style="font-size: 1.75rem; color: #9ca3af;"></i><span style="font-size: 0.9rem; color: #4b5563;">No visual evidence was captured for this violation.</span></div>`
                 }
             </div>
+
+            ${v.remarks ? `<div style="margin-bottom: 24px;"><h4 style="font-size: 1rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 8px;">Previous Remarks</h4><p style="background-color: #FEFCE8; border: 1px solid #FDE68A; padding: 12px; border-radius: 6px; margin: 0; font-size: 0.9rem; color: #713F12;">${v.remarks}</p></div>` : ''}
         `;
 
-        // Hide actions if already processed
         if (v.review_status !== 'Pending' && v.review_status !== 'Under Review') {
-            actions.style.display = 'none';
+            // No actions
         } else {
-            actions.style.display = 'flex';
+            contentHtml += `
+                <div style="border-top: 1px solid #e5e7eb; padding: 16px 24px; background-color: #f9fafb; margin: 24px -24px -24px -24px; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
+                    <label for="violation-remarks" style="font-size: 0.9rem; font-weight: 600; color: #374151; display: block; margin-bottom: 8px;">Add Remarks & Resolve</label>
+                    <textarea id="violation-remarks" placeholder="Add optional remarks to justify your decision..." style="width: 100%; min-height: 60px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem; margin-bottom: 12px; box-sizing: border-box; resize: vertical;"></textarea>
+                    <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                        <button onclick="resolveViolation('Dismissed')" style="background-color: #6b7280; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.9rem;">Dismiss</button>
+                        <button onclick="resolveViolation('Resolved')" style="background-color: #16A34A; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.9rem;">Confirm Violation</button>
+                    </div>
+                </div>
+            `;
         }
+
+        content.innerHTML = contentHtml;
     } catch (error) {
         content.innerHTML = `<p style="color:red">Error loading evidence: ${error.message}</p>`;
     }
@@ -1893,6 +2141,7 @@ async function viewEvidence(id) {
 
 function closeEvidenceModal() {
     document.getElementById('evidence-modal').style.display = 'none';
+    document.body.style.overflow = '';
     currentViolationId = null;
 }
 
@@ -1908,6 +2157,26 @@ async function resolveViolation(status) {
     } catch (error) {
         alert("Error: " + error.message);
     }
+}
+
+function openFullScreenImage(src) {
+    let overlay = document.getElementById('fullscreen-image-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'fullscreen-image-overlay';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); z-index: 100000; display: flex; align-items: center; justify-content: center; cursor: zoom-out;';
+        
+        const img = document.createElement('img');
+        img.id = 'fullscreen-image';
+        img.style.cssText = 'max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);';
+        
+        overlay.appendChild(img);
+        document.body.appendChild(overlay);
+        
+        overlay.onclick = function() { this.style.display = 'none'; };
+    }
+    document.getElementById('fullscreen-image').src = src;
+    overlay.style.display = 'flex';
 }
 
 // --- System Logs ---

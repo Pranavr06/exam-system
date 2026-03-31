@@ -18,6 +18,7 @@ from routes.violation import router as violation_router
 from routes.teacher_routes import router as teacher_dashboard_router
 from routes.admin_dashboard import router as admin_dashboard_router
 from routes.student_dashboard import router as student_dashboard_router
+from center_exams import router as center_exams_router
 
 app = FastAPI(title="OEMS API")
 
@@ -45,6 +46,8 @@ app.include_router(violation_router)
 app.include_router(teacher_dashboard_router)
 app.include_router(admin_dashboard_router)
 app.include_router(student_dashboard_router)
+app.include_router(center_exams_router)
+
 
 @app.get("/")
 def root():

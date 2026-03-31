@@ -851,3 +851,47 @@ td button:hover { opacity: 0.8; }
     background-color: #E2E8F0;
     color: #1E293B;
 }
+
+/* Global Pagination Styles */
+div[id$="pagination-controls"],
+div[id$="-pagination"] {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 5px;
+    margin-top: 15px;
+}
+
+div[id$="pagination-controls"] button,
+div[id$="-pagination"] button {
+    padding: 6px 12px;
+    margin: 0 2px;
+    border: 1px solid #dee2e6;
+    background-color: white;
+    color: #3182ce;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+div[id$="pagination-controls"] button:hover:not(:disabled),
+div[id$="-pagination"] button:hover:not(:disabled) {
+    background-color: #ebf8ff;
+    color: #2b6cb0;
+}
+
+div[id$="pagination-controls"] button.active,
+div[id$="-pagination"] button.active {
+    background-color: #3182ce;
+    color: white;
+    border-color: #3182ce;
+}
+
+div[id$="pagination-controls"] button:disabled,
+div[id$="-pagination"] button:disabled {
+    background-color: #e9ecef;
+    color: #6c757d;
+    cursor: not-allowed;
+    border-color: #dee2e6;
+}

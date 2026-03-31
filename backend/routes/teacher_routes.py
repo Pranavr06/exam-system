@@ -2,9 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Body, Query, Request
 from db import get_connection
 from security import get_current_user
 from .system_logger import log_action, log_teacher_action
+from passlib.context import CryptContext
 import mysql.connector
+from datetime import datetime
 
 router = APIRouter()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # --- Profile ---
 @router.get("/teacher/profile")
@@ -285,6 +288,9 @@ def create_exam_teacher(
     total_marks: int = Body(...),
     exam_date: str = Body(...),
     section_ids: list[int] = Body(...),
+    mode: str = Body("ONLINE"),
+    lab_id: int = Body(None),
+    password: str = Body(None),
     user=Depends(get_current_user),
 ):
     if user["role"] != "teacher":
@@ -325,16 +331,57 @@ def create_exam_teacher(
         formatted_date = exam_date.replace("T", " ")
         if len(formatted_date) == 16: formatted_date += ":00"
 
+        # Prevent scheduling in the past
+        exam_datetime = datetime.strptime(formatted_date, "%Y-%m-%d %H:%M:%S")
+        if exam_datetime < datetime.now():
+            raise HTTPException(status_code=400, detail="Cannot schedule an exam in the past.")
+
+        # ✅ Validate, sanitize, and hash Center Mode Details
+        hashed_password = None
+        if mode == "CENTER":
+            if not password or not password.strip():
+                raise HTTPException(status_code=400, detail="A non-empty password is required for Center-based exams.")
+            if not lab_id:
+                raise HTTPException(status_code=400, detail="A lab is required for Center-based exams.")
+            hashed_password = pwd_context.hash(password.strip())
+        if mode == "ONLINE":
+            lab_id = None
+            password = None
+
         exam_scope = "SECTION" # Default for teachers
+
+        # Check for overlapping exams in the selected sections
+        overlap_format_strings = ','.join(['%s'] * len(section_ids))
+        overlap_query = f"""
+            SELECT DISTINCT e.exam_name, sec.section_name 
+            FROM exam e
+            JOIN exam_section es ON e.exam_id = es.exam_id
+            JOIN section sec ON es.section_id = sec.section_id
+            WHERE es.section_id IN ({overlap_format_strings})
+              AND e.status != 'completed'
+              AND e.is_archived = 0
+              AND e.date < DATE_ADD(%s, INTERVAL %s MINUTE)
+              AND DATE_ADD(e.date, INTERVAL e.duration MINUTE) > %s
+        """
+        overlap_params = tuple(section_ids) + (formatted_date, duration, formatted_date)
+        cursor.execute(overlap_query, overlap_params)
+        overlaps = cursor.fetchall()
+        
+        if overlaps:
+            overlap_details = ", ".join([f"'{o['exam_name']}' (Section {o['section_name']})" for o in overlaps])
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Time conflict! The selected sections already have exams scheduled during this time: {overlap_details}"
+            )
 
         # 4. Insert Exam
         try:
             cursor.execute("""
                 INSERT INTO exam (
                     exam_name, subject_id, date, duration, total_marks, status, 
-                    created_by_teacher, department_id, exam_scope
-                ) VALUES (%s, %s, %s, %s, %s, 'scheduled', %s, %s, %s)
-            """, (exam_name, subject_id, formatted_date, duration, total_marks, user["user_id"], dept_id, exam_scope))
+                    created_by_teacher, department_id, exam_scope, mode, lab_id, password_hash
+                ) VALUES (%s, %s, %s, %s, %s, 'scheduled', %s, %s, %s, %s, %s, %s)
+            """, (exam_name, subject_id, formatted_date, duration, total_marks, user["user_id"], dept_id, exam_scope, mode, lab_id, hashed_password))
             
             new_exam_id = cursor.lastrowid
         except mysql.connector.IntegrityError:
@@ -377,7 +424,7 @@ def get_teacher_exams(
         conn.commit()
 
         query = """
-            SELECT e.exam_id, e.exam_name, s.subject_name, e.date, 
+            SELECT e.exam_id, e.exam_name, s.subject_name, e.date, e.mode,
                    CASE
                        WHEN e.status = 'completed' THEN 'completed'
                        WHEN NOW() > (e.date + INTERVAL e.duration MINUTE) THEN 'completed'
@@ -836,7 +883,8 @@ def publish_exam_teacher(exam_id: int, request: Request, user=Depends(get_curren
                 detail=f"Marks mismatch! Exam Total: {exam['total_marks']}, Questions Total: {total_q_marks}."
             )
 
-        cursor.execute("UPDATE exam SET status = 'active' WHERE exam_id = %s", (exam_id,))
+        # Update status and set start time to now for instant publishing
+        cursor.execute("UPDATE exam SET status = 'active', date = NOW() WHERE exam_id = %s", (exam_id,))
 
         log_action(user["user_id"], user["role"], exam["department_id"], f"Published Exam ID: {exam_id}", "exam", exam_id, ip_address=request.client.host)
         log_teacher_action(user["user_id"], exam["department_id"], f"Published Exam ID: {exam_id}", exam_id=exam_id, ip_address=request.client.host)
@@ -915,6 +963,9 @@ def update_exam_teacher(
     total_marks: int = Body(...),
     exam_date: str = Body(...),
     section_ids: list[int] = Body(...),
+    mode: str = Body("ONLINE"),
+    lab_id: int = Body(None),
+    password: str = Body(None),
     user=Depends(get_current_user),
 ):
     if user["role"] != "teacher":
@@ -938,13 +989,61 @@ def update_exam_teacher(
         dept_id = cursor.fetchone()["department_id"]
 
         formatted_date = exam_date.replace("T", " ") if "T" in exam_date else exam_date
+        if len(formatted_date) == 16: formatted_date += ":00"
+
+        # Prevent scheduling in the past
+        exam_datetime = datetime.strptime(formatted_date, "%Y-%m-%d %H:%M:%S")
+        if exam_datetime < datetime.now():
+            raise HTTPException(status_code=400, detail="Cannot schedule an exam in the past.")
+            
+        # ✅ Validate, sanitize, and hash Center Mode Details
+        hashed_password = None
+        if mode == "CENTER":
+            if not password or not password.strip():
+                raise HTTPException(status_code=400, detail="A non-empty password is required for Center-based exams.")
+            if not lab_id:
+                raise HTTPException(status_code=400, detail="A lab is required for Center-based exams.")
+            password = password.strip()
+            if not password.startswith('$2b$'):
+                hashed_password = pwd_context.hash(password)
+            else:
+                hashed_password = password # Assume it's the old hash being re-submitted
+        if mode == "ONLINE":
+            lab_id = None
+            password = None
+
+        # Check for overlapping exams in the selected sections (excluding current exam)
+        overlap_format_strings = ','.join(['%s'] * len(section_ids))
+        overlap_query = f"""
+            SELECT DISTINCT e.exam_name, sec.section_name 
+            FROM exam e
+            JOIN exam_section es ON e.exam_id = es.exam_id
+            JOIN section sec ON es.section_id = sec.section_id
+            WHERE es.section_id IN ({overlap_format_strings})
+              AND e.exam_id != %s
+              AND e.status != 'completed'
+              AND e.is_archived = 0
+              AND e.date < DATE_ADD(%s, INTERVAL %s MINUTE)
+              AND DATE_ADD(e.date, INTERVAL e.duration MINUTE) > %s
+        """
+        overlap_params = tuple(section_ids) + (exam_id, formatted_date, duration, formatted_date)
+        cursor.execute(overlap_query, overlap_params)
+        overlaps = cursor.fetchall()
+        
+        if overlaps:
+            overlap_details = ", ".join([f"'{o['exam_name']}' (Section {o['section_name']})" for o in overlaps])
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Time conflict! The selected sections already have exams scheduled during this time: {overlap_details}"
+            )
 
         # Update Exam
         cursor.execute("""
             UPDATE exam SET 
-                exam_name=%s, subject_id=%s, date=%s, duration=%s, total_marks=%s
+                exam_name=%s, subject_id=%s, date=%s, duration=%s, total_marks=%s,
+                mode=%s, lab_id=%s, password_hash=%s
             WHERE exam_id=%s
-        """, (exam_name, subject_id, formatted_date, duration, total_marks, exam_id))
+        """, (exam_name, subject_id, formatted_date, duration, total_marks, mode, lab_id, hashed_password, exam_id))
 
         # Update Sections (Delete old, insert new)
         cursor.execute("DELETE FROM exam_section WHERE exam_id = %s", (exam_id,))
@@ -962,7 +1061,7 @@ def update_exam_teacher(
 
 # --- Teacher Violations ---
 @router.get("/teacher/violations/stats")
-def get_teacher_violation_stats(status: str = Query(None), exam_id: int = Query(None), violation_type: str = Query(None), user=Depends(get_current_user)):
+def get_teacher_violation_stats(status: str = Query(None), exam_search: str = Query(None), violation_type: str = Query(None), user=Depends(get_current_user)):
     if user["role"] != "teacher":
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -976,9 +1075,9 @@ def get_teacher_violation_stats(status: str = Query(None), exam_id: int = Query(
         if status:
             base_where += " AND v.review_status = %s"
             params.append(status)
-        if exam_id:
-            base_where += " AND v.exam_id = %s"
-            params.append(exam_id)
+        if exam_search:
+            base_where += " AND e.exam_name LIKE %s"
+            params.append(f"%{exam_search}%")
         if violation_type:
             base_where += " AND v.violation_type = %s"
             params.append(violation_type)
@@ -1031,7 +1130,7 @@ def get_teacher_violation_history(
     page: int = 1,
     limit: int = 20,
     status: str = Query(None),
-    exam_id: int = Query(None),
+    exam_search: str = Query(None),
     search: str = Query(None),
     start_date: str = Query(None),
     end_date: str = Query(None),
@@ -1055,9 +1154,9 @@ def get_teacher_violation_history(
         if status:
             base_query += " AND v.review_status = %s"
             params.append(status)
-        if exam_id:
-            base_query += " AND v.exam_id = %s"
-            params.append(exam_id)
+        if exam_search:
+            base_query += " AND e.exam_name LIKE %s"
+            params.append(f"%{exam_search}%")
         if start_date:
             base_query += " AND DATE(v.detected_at) >= %s"
             params.append(start_date)
@@ -1351,6 +1450,12 @@ def create_reexam_class_teacher(
             raise HTTPException(status_code=404, detail="Original exam not found or access denied")
 
         formatted_date = exam_date.replace("T", " ")
+        if len(formatted_date) == 16: formatted_date += ":00"
+
+        # Prevent scheduling in the past
+        exam_datetime = datetime.strptime(formatted_date, "%Y-%m-%d %H:%M:%S")
+        if exam_datetime < datetime.now():
+            raise HTTPException(status_code=400, detail="Cannot schedule a re-exam in the past.")
         new_name = f"Retake: {original['exam_name']}"
 
         # Create new exam instance
@@ -1411,6 +1516,12 @@ def create_reexam_students_teacher(
     cursor = conn.cursor(dictionary=True)
     try:
         formatted_date = exam_date.replace("T", " ")
+        if len(formatted_date) == 16: formatted_date += ":00"
+        
+        # Prevent scheduling in the past
+        exam_datetime = datetime.strptime(formatted_date, "%Y-%m-%d %H:%M:%S")
+        if exam_datetime < datetime.now():
+            raise HTTPException(status_code=400, detail="Cannot schedule a re-exam in the past.")
         
         # Verify exam exists
         cursor.execute("SELECT department_id FROM exam WHERE exam_id = %s AND created_by_teacher = %s", (exam_id, user["user_id"]))
