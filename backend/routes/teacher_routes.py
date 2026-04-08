@@ -872,11 +872,44 @@ def publish_exam_teacher(exam_id: int, request: Request, user=Depends(get_curren
         if not exam:
             raise HTTPException(status_code=403, detail="Access denied")
 
-        # Validate Marks
-        cursor.execute("SELECT SUM(marks) as total_q_marks FROM question WHERE exam_id = %s", (exam_id,))
+        # Center-based check: Ensure all students have PCs assigned
+        if exam['mode'] == 'CENTER':
+            cursor.execute("""
+                SELECT COUNT(DISTINCT s.student_id) as total_students
+                FROM student s
+                JOIN exam_section es ON s.section_id = es.section_id
+                WHERE es.exam_id = %s
+            """, (exam_id,))
+            total_students = cursor.fetchone()["total_students"] or 0
+            
+            cursor.execute("SELECT COUNT(DISTINCT student_id) as assigned_pcs FROM student_pc_assignment WHERE exam_id = %s", (exam_id,))
+            assigned_pcs = cursor.fetchone()["assigned_pcs"] or 0
+            
+            if total_students > 0 and assigned_pcs < total_students:
+                raise HTTPException(status_code=400, detail=f"Cannot publish Center-based exam: Only {assigned_pcs} out of {total_students} students have been assigned PCs.")
+
+        # Validate Questions exist and get marks
+        cursor.execute("SELECT COUNT(*) as q_count, SUM(marks) as total_q_marks FROM question WHERE exam_id = %s", (exam_id,))
         result = cursor.fetchone()
+        q_count = result["q_count"] or 0
         total_q_marks = result["total_q_marks"] or 0
 
+        if q_count == 0:
+            raise HTTPException(status_code=400, detail="Cannot publish an exam without any questions.")
+
+        # Validate sufficient options per question
+        cursor.execute("""
+            SELECT q.question_id
+            FROM question q
+            LEFT JOIN question_option qo ON q.question_id = qo.question_id
+            WHERE q.exam_id = %s
+            GROUP BY q.question_id
+            HAVING COUNT(qo.option_id) < 2
+        """, (exam_id,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Cannot publish: One or more questions have insufficient options (minimum 2 required).")
+
+        # Validate Marks Mismatch
         if abs(float(total_q_marks) - float(exam["total_marks"])) > 0.01:
             raise HTTPException(
                 status_code=400, 
@@ -1109,7 +1142,7 @@ def get_teacher_violation_stats(status: str = Query(None), exam_search: str = Qu
         """, tuple(params))
         stats["students_flagged"] = cursor.fetchone()["c"]
 
-        # 2. Recent Violations
+        # 2. Recent Violations (respects status filter)
         cursor.execute(f"""
             SELECT v.violation_id, s.name, s.usn, e.exam_name, v.violation_type, v.detected_at as timestamp, v.review_status
             FROM violation v 
@@ -1242,7 +1275,7 @@ def resolve_violation_teacher(
     try:
         # Fetch details first for logging and verification
         cursor.execute("""
-            SELECT v.student_id, v.exam_id, e.department_id, s.name as student_name, s.usn
+            SELECT v.review_status, v.student_id, v.exam_id, v.question_id, e.department_id, s.name as student_name, s.usn
             FROM violation v 
             JOIN exam e ON v.exam_id = e.exam_id 
             JOIN student s ON v.student_id = s.student_id
@@ -1253,6 +1286,9 @@ def resolve_violation_teacher(
         
         if not details:
              raise HTTPException(status_code=404, detail="Violation not found or access denied")
+             
+        if details["review_status"] in ["Resolved", "Dismissed"]:
+             raise HTTPException(status_code=403, detail="Decision has already been finalized and cannot be changed by a teacher.")
 
         # Update Violation
         cursor.execute("""
@@ -1261,6 +1297,39 @@ def resolve_violation_teacher(
             WHERE violation_id = %s
         """, (status, remarks, user["user_id"], violation_id))
         
+        # --- MARKS PENALTY LOGIC ---
+        if details.get("question_id"):
+            q_id = details["question_id"]
+            s_id = details["student_id"]
+            e_id = details["exam_id"]
+            
+            if status == 'Resolved':
+                cursor.execute("""
+                    UPDATE answer SET marks_awarded = 0 
+                    WHERE student_id = %s AND exam_id = %s AND question_id = %s
+                """, (s_id, e_id, q_id))
+            elif status == 'Dismissed':
+                # Ensure there are no OTHER active 'Resolved' violations for this same question before restoring marks
+                cursor.execute("""
+                    SELECT COUNT(*) as c FROM violation 
+                    WHERE student_id = %s AND exam_id = %s AND question_id = %s AND review_status = 'Resolved' AND violation_id != %s
+                """, (s_id, e_id, q_id, violation_id))
+                if cursor.fetchone()["c"] == 0:
+                    cursor.execute("""
+                        UPDATE answer a
+                        JOIN question_option qo ON a.selected_option_id = qo.option_id
+                        JOIN question q ON a.question_id = q.question_id
+                        SET a.marks_awarded = CASE WHEN qo.is_correct = 1 THEN q.marks ELSE 0 END
+                        WHERE a.student_id = %s AND a.exam_id = %s AND a.question_id = %s
+                    """, (s_id, e_id, q_id))
+            
+            # Recalculate and save Total Result Marks
+            cursor.execute("""
+                UPDATE result r
+                SET r.total_marks = (SELECT COALESCE(SUM(marks_awarded), 0) FROM answer WHERE student_id = %s AND exam_id = %s)
+                WHERE r.student_id = %s AND r.exam_id = %s
+            """, (s_id, e_id, s_id, e_id))
+
         # Auto-flag High Risk Student
         if status == 'Resolved':
             student_id = details["student_id"]

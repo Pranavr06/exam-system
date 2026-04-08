@@ -295,7 +295,8 @@ def create_reexam_class(
         if exam_datetime < datetime.now():
             raise HTTPException(status_code=400, detail="Cannot schedule a re-exam in the past.")
             
-        new_name = f"Retake: {original['exam_name']}"
+        timestamp = datetime.now().strftime("%b %d, %H:%M:%S")
+        new_name = f"Retake: {original['exam_name']} ({timestamp})"
 
         # Create new exam instance
         cursor.execute("""
@@ -877,17 +878,49 @@ def publish_exam_admin(exam_id: int, request: Request, user=Depends(get_current_
 
     try:
         # 1. Get Exam Details
-        cursor.execute("SELECT total_marks, department_id FROM exam WHERE exam_id = %s", (exam_id,))
+        cursor.execute("SELECT total_marks, department_id, mode FROM exam WHERE exam_id = %s", (exam_id,))
         exam = cursor.fetchone()
         if not exam:
             raise HTTPException(status_code=404, detail="Exam not found")
 
-        # 2. Calculate Total Question Marks
-        cursor.execute("SELECT SUM(marks) as total_q_marks FROM question WHERE exam_id = %s", (exam_id,))
+        # Center-based check: Ensure all students have PCs assigned
+        if exam['mode'] == 'CENTER':
+            cursor.execute("""
+                SELECT COUNT(DISTINCT s.student_id) as total_students
+                FROM student s
+                JOIN exam_section es ON s.section_id = es.section_id
+                WHERE es.exam_id = %s
+            """, (exam_id,))
+            total_students = cursor.fetchone()["total_students"] or 0
+            
+            cursor.execute("SELECT COUNT(DISTINCT student_id) as assigned_pcs FROM student_pc_assignment WHERE exam_id = %s", (exam_id,))
+            assigned_pcs = cursor.fetchone()["assigned_pcs"] or 0
+            
+            if total_students > 0 and assigned_pcs < total_students:
+                raise HTTPException(status_code=400, detail=f"Cannot publish Center-based exam: Only {assigned_pcs} out of {total_students} students have been assigned PCs.")
+
+        # 2. Check Question Count and Total Marks
+        cursor.execute("SELECT COUNT(*) as q_count, SUM(marks) as total_q_marks FROM question WHERE exam_id = %s", (exam_id,))
         result = cursor.fetchone()
+        q_count = result["q_count"] or 0
         total_q_marks = result["total_q_marks"] or 0
 
-        # 3. Validate
+        if q_count == 0:
+            raise HTTPException(status_code=400, detail="Cannot publish an exam without any questions.")
+
+        # 3. Check for invalid questions (missing options)
+        cursor.execute("""
+            SELECT q.question_id
+            FROM question q
+            LEFT JOIN question_option qo ON q.question_id = qo.question_id
+            WHERE q.exam_id = %s
+            GROUP BY q.question_id
+            HAVING COUNT(qo.option_id) < 2
+        """, (exam_id,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Cannot publish: One or more questions have insufficient options (minimum 2 required).")
+
+        # 4. Validate Marks Mismatch
         if abs(float(total_q_marks) - float(exam["total_marks"])) > 0.01:
             raise HTTPException(
                 status_code=400, 

@@ -38,13 +38,16 @@ document.addEventListener("DOMContentLoaded", () => {
 function loadUserProfile() {
     const profile = JSON.parse(localStorage.getItem('userProfile'));
     if (profile) {
-        document.getElementById('nav-user').textContent = profile.name;
-        document.getElementById('nav-designation').textContent = profile.designation;
+        const navUser = document.getElementById('nav-user');
+        const navDesig = document.getElementById('nav-designation');
+        if (navUser) navUser.textContent = profile.name;
+        if (navDesig) navDesig.textContent = profile.designation;
     }
 }
 
 let navHistory = [];
 let isNavigatingBack = false;
+let currentLogsData = [];
 
 // UI Tab Switching Logic
 function showSection(sectionName) {
@@ -64,8 +67,12 @@ function showSection(sectionName) {
     document.querySelectorAll('.sidebar button').forEach(btn => {
         btn.classList.remove('active');
     });
-    document.getElementById(`${sectionName}-section`).classList.add('active');
-    document.querySelector(`.sidebar button[data-section="${sectionName}"]`).classList.add('active');
+    
+    const sectionEl = document.getElementById(`${sectionName}-section`);
+    if (sectionEl) sectionEl.classList.add('active');
+    
+    const btn = document.querySelector(`.sidebar button[data-section="${sectionName}"]`);
+    if (btn) btn.classList.add('active');
 
     updateBreadcrumb(sectionName);
 
@@ -131,6 +138,9 @@ function updateBreadcrumb(section) {
 async function loadDashboardStats() {
     const container = document.getElementById('sa-stats-container');
     const alertsContainer = document.getElementById('sa-alerts-container');
+    
+    if (!container) return; // Prevent crash if container is missing
+    
     container.innerHTML = '<div class="spinner"></div>';
     checkSystemHealth(); // Check health when loading dashboard
     try {
@@ -184,59 +194,67 @@ async function loadDashboardStats() {
         renderStudentDistChart(stats.student_performance_dist);
 
         // Update Students Writing Badge
-        document.getElementById('students-writing-badge').textContent = `${stats.students_writing || 0} Students Writing`;
-        
+        const writingBadge = document.getElementById('students-writing-badge');
+        if (writingBadge) writingBadge.textContent = `${stats.students_writing || 0} Students Writing`;
+
         // Update Active Teachers Badge
-        document.getElementById('active-teachers-badge').textContent = `${stats.active_teachers_today || 0} Active Today`;
+        const activeTeachersBadge = document.getElementById('active-teachers-badge');
+        if (activeTeachersBadge) activeTeachersBadge.textContent = `${stats.active_teachers_today || 0} Active Today`;
 
         // Render Active Exams
         const activeExamsBody = document.getElementById('active-exams-body');
-        if (stats.active_exams.length === 0) {
-            activeExamsBody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">No active exams currently.</td></tr>';
-        } else {
-            activeExamsBody.innerHTML = stats.active_exams.slice(0, 5).map(e => `
-                <tr>
-                    <td><strong>${e.exam_name}</strong></td>
-                    <td><span class="dept-badge">${e.department_name}</span></td>
-                    <td>${new Date(e.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-                    <td>${e.section_count} Sections</td>
-                </tr>
-            `).join('');
+        if (activeExamsBody) {
+            if (stats.active_exams.length === 0) {
+                activeExamsBody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">No active exams currently.</td></tr>';
+            } else {
+                activeExamsBody.innerHTML = stats.active_exams.slice(0, 5).map(e => `
+                    <tr>
+                        <td><strong>${e.exam_name}</strong></td>
+                        <td><span class="dept-badge">${e.department_name}</span></td>
+                        <td>${new Date(e.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
+                        <td>${e.section_count} Sections</td>
+                    </tr>
+                `).join('');
+            }
         }
 
         // Render Violations
         const violationsList = document.getElementById('recent-violations-list');
-        if (stats.recent_violations.length === 0) {
-            violationsList.innerHTML = '<p style="color:#666; text-align:center; padding:10px;">No recent violations.</p>';
-        } else {
-            violationsList.innerHTML = stats.recent_violations.slice(0, 5).map(v => `
-                <div class="activity-item violation">
-                    <div class="act-icon"><i class="fas fa-exclamation-circle"></i></div>
-                    <div class="act-content">
-                        <strong>${v.student_name}</strong> (${v.department_name})<br>
-                        <span style="color:#DC2626;">${v.violation_type}</span> in ${v.exam_name}
-                        <div class="act-time">${new Date(v.timestamp).toLocaleString()}</div>
+        if (violationsList) {
+            if (stats.recent_violations.length === 0) {
+                violationsList.innerHTML = '<p style="color:#666; text-align:center; padding:10px;">No recent violations.</p>';
+            } else {
+                violationsList.innerHTML = stats.recent_violations.slice(0, 5).map(v => `
+                    <div class="activity-item violation">
+                        <div class="act-icon"><i class="fas fa-exclamation-circle"></i></div>
+                        <div class="act-content">
+                            <strong>${v.student_name}</strong> (${v.department_name})<br>
+                            <span style="color:#DC2626;">${v.violation_type}</span> in ${v.exam_name}
+                            <div class="act-time">${new Date(v.timestamp).toLocaleString()}</div>
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `).join('');
+            }
         }
 
         // Render Activity Feed
         const activityList = document.getElementById('system-activity-feed');
-        if (stats.recent_activity.length === 0) {
-            activityList.innerHTML = '<p style="color:#666; text-align:center; padding:10px;">No recent activity.</p>';
-        } else {
-            activityList.innerHTML = stats.recent_activity.slice(0, 5).map(a => `
-                <div class="activity-item">
-                    <div class="act-icon normal"><i class="fas fa-info"></i></div>
-                    <div class="act-content">
-                        <strong>${a.user_name}</strong> <span class="role-badge" style="font-size:0.7em;">${a.role}</span>
-                        ${a.department_name ? `<span style="font-size: 0.75rem; color: #666;">(${a.department_name})</span>` : ''}<br>
-                        ${a.action}
-                        <div class="act-time">${new Date(a.created_at).toLocaleString()}</div>
+        if (activityList) {
+            if (stats.recent_activity.length === 0) {
+                activityList.innerHTML = '<p style="color:#666; text-align:center; padding:10px;">No recent activity.</p>';
+            } else {
+                activityList.innerHTML = stats.recent_activity.slice(0, 5).map(a => `
+                    <div class="activity-item">
+                        <div class="act-icon normal"><i class="fas fa-info"></i></div>
+                        <div class="act-content">
+                            <strong>${a.user_name}</strong> <span class="role-badge" style="font-size:0.7em;">${a.role}</span>
+                            ${a.department_name ? `<span style="font-size: 0.75rem; color: #666;">(${a.department_name})</span>` : ''}<br>
+                            ${a.action}
+                            <div class="act-time">${new Date(a.created_at).toLocaleString()}</div>
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `).join('');
+            }
         }
 
         // Render Department Health
@@ -951,23 +969,52 @@ async function loadViolationHistory(page = 1) {
             return;
         }
 
-        tbody.innerHTML = data.history.map(v => `
-            <tr>
-                <td><strong>${v.student_name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
-                <td><span class="dept-badge">${v.department_name}</span></td>
-                <td>${v.exam_name}</td>
-                <td><span style="color:#DC2626;">${v.violation_type}</span></td>
-                <td>
-                    <span class="status-badge ${v.review_status === 'Resolved' ? 'active' : 'inactive'}">
-                        ${v.review_status}
-                    </span>
-                </td>
-                <td>${new Date(v.timestamp).toLocaleString()}</td>
-                <td><small>${v.admin_remarks || '-'}</small></td>
-                <td><small>${v.remarks || '-'}</small></td>
-                <td><button class="btn-action" onclick="viewEvidence(${v.violation_id})" style="color: #3182ce; font-weight: 500;">View</button></td>
-            </tr>
-        `).join('');
+       const grouped = {};
+        data.history.forEach(v => {
+            const key = `history_${v.usn}_${v.exam_name}`.replace(/\W/g, '_');
+            if (!grouped[key]) {
+                grouped[key] = { student_name: v.student_name || v.name, usn: v.usn, department_name: v.department_name, exam_name: v.exam_name, violations: [] };
+            }
+            grouped[key].violations.push(v);
+        });
+
+        tbody.innerHTML = Object.keys(grouped).map(key => {
+            const g = grouped[key];
+            return `
+                <tr style="cursor: pointer; background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;" onclick="toggleViolationDetails('details-${key}', 'icon-${key}')">
+                    <td>
+                        <i class="fas fa-chevron-down" id="icon-${key}" style="margin-right: 8px; transition: transform 0.2s;"></i>
+                        <strong>${g.student_name}</strong> <span style="font-size:0.8em; color:#666;">(${g.usn})</span>
+                    </td>
+                    <td><span class="dept-badge">${g.department_name}</span></td>
+                    <td>${g.exam_name}</td>
+                    <td colspan="6">
+                        <span style="background:#FEE2E2; color:#DC2626; padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold;">
+                            ${g.violations.length} Violation(s)
+                        </span>
+                    </td>
+                </tr>
+                <tr id="details-${key}" style="display: none;">
+                    <td colspan="9" style="padding: 0; background-color: #f1f5f9;">
+                        <table style="width: 100%; margin: 0; background: transparent; border-collapse: collapse;">
+                            <tbody>
+                                ${g.violations.map(v => `
+                                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                                        <td style="width: 25%; padding-left: 40px;"><span style="color:#DC2626; font-weight: 500;">${v.violation_type}</span></td>
+                                        <td style="width: 10%;"><span class="status-badge" style="background-color: ${v.review_status === 'Resolved' ? '#DCFCE7' : v.review_status === 'Dismissed' ? '#F1F5F9' : '#FEF2F2'}; color: ${v.review_status === 'Resolved' ? '#16A34A' : v.review_status === 'Dismissed' ? '#64748B' : '#DC2626'}; padding: 4px 8px; border-radius: 12px; font-size: 0.75rem;">${v.review_status}</span></td>
+                                        <td style="width: 15%;">${new Date(v.timestamp).toLocaleString()}</td>
+                                        <td style="width: 15%;"><small>${v.admin_remarks || '-'}</small></td>
+                                        <td style="width: 15%;"><small>${v.remarks || '-'}</small></td>
+                                        <td style="width: 20%; text-align: right; padding-right: 20px;"><button class="btn-action" onclick="viewEvidence(${v.violation_id})" style="color: #3182ce; font-weight: 500; padding: 4px 8px; border-radius: 4px; border: 1px solid #e2e8f0; background: white;">Review Evidence</button></td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
 
         if (paginationContainer) {
             let paginationHtml = '';
@@ -1057,6 +1104,40 @@ function renderViolationTypeChart(data) {
     });
 }
 
+// Global UI helper for grouped tables
+window.toggleViolationDetails = function(detailsId, iconId) {
+    const detailsRow = document.getElementById(detailsId);
+    const icon = document.getElementById(iconId);
+    if (detailsRow) {
+        if (detailsRow.style.display === 'none') {
+            detailsRow.style.display = 'table-row';
+            if (icon) icon.style.transform = 'rotate(180deg)';
+        } else {
+            detailsRow.style.display = 'none';
+            if (icon) icon.style.transform = 'rotate(0deg)';
+        }
+    }
+
+function togglePasswordVisibility(inputId, btn) {
+    const input = document.getElementById(inputId);
+    const icon = btn.querySelector("i");
+    
+    if (input && input.type === "password") {
+        input.type = "text";
+        if (icon) {
+            icon.classList.remove("fa-eye");
+            icon.classList.add("fa-eye-slash");
+        }
+    } else if (input) {
+        input.type = "password";
+        if (icon) {
+            icon.classList.remove("fa-eye-slash");
+            icon.classList.add("fa-eye");
+        }
+    }
+}
+};
+
 let showingArchived = false;
 function toggleArchivedExams() {
     showingArchived = !showingArchived;
@@ -1104,7 +1185,7 @@ async function loadAllExams() {
                 <td>
                     ${showingArchived ? 
                         `<button onclick="restoreExam(${e.exam_id})" class="btn-action" style="color: #3182ce;">Restore</button>` : 
-                        '-'
+                        (e.status === 'completed' || e.status === 'active' ? `<button onclick="viewExamResults(${e.exam_id})" class="btn-action" style="color: #6f42c1; font-weight: bold;">Results</button>` : '-')
                     }
                 </td>
             </tr>
@@ -1126,6 +1207,33 @@ async function restoreExam(examId) {
     }
 }
 
+async function viewExamResults(examId) {
+    const tbody = document.querySelector('#results-table tbody');
+    openModal('results-modal');
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Loading...</td></tr>';
+
+    try {
+        const results = await apiRequest(`/superadmin/exams/${examId}/results`);
+        
+        if (results.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No results found yet.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = results.map(r => `
+            <tr>
+                <td>${r.usn}</td>
+                <td>${r.name}</td>
+                <td><strong>${r.total_marks}</strong></td>
+                <td><span class="status-badge" style="background-color: ${r.result_status === 'Finalized' ? '#DCFCE7' : '#FEF3C7'}; color: ${r.result_status === 'Finalized' ? '#16A34A' : '#B45309'}; padding: 4px 8px; border-radius: 12px; font-size: 0.75rem;">${r.result_status}</span></td>
+                <td>${new Date(r.generated_time).toLocaleString()}</td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">Error: ${error.message}</td></tr>`;
+    }
+}
+
 async function cleanupArchivedExams() {
     const days = prompt("Enter the number of days (exams older than this will be permanently deleted):", "30");
     if (days === null) return;
@@ -1141,6 +1249,26 @@ async function cleanupArchivedExams() {
         const result = await apiRequest(`/superadmin/exams/cleanup?days=${days}`, 'DELETE');
         alert(result.message);
         loadAllExams();
+    } catch (error) {
+        alert("Error: " + error.message);
+    }
+}
+
+async function cleanupOldViolations() {
+    const days = prompt("Enter the number of days (violations older than this will be permanently deleted, including their Supabase screenshots):", "30");
+    if (days === null) return;
+    
+    if (isNaN(days) || days < 1) {
+        alert("Please enter a valid number of days.");
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to PERMANENTLY delete violations and screenshots older than ${days} days? This cannot be undone.`)) return;
+
+    try {
+        const result = await apiRequest(`/superadmin/violations/cleanup?days=${days}`, 'DELETE');
+        alert(result.message);
+        loadViolationAnalytics();
     } catch (error) {
         alert("Error: " + error.message);
     }
@@ -1165,6 +1293,10 @@ async function viewEvidence(id) {
         modalContent.style.maxHeight = '90vh';
         modalContent.style.overflowY = 'auto';
         content.style.padding = '24px';
+        
+        // Hide hardcoded HTML footer to prevent duplicate resolve options
+        const oldFooter = modalContent.querySelector('.modal-footer');
+        if (oldFooter) oldFooter.style.display = 'none';
     }
 
     content.innerHTML = '<div class="spinner"></div>';
@@ -1205,9 +1337,19 @@ async function viewEvidence(id) {
                     v.evidence.map(e => `
                         <div style="border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 16px; overflow: hidden;">
                             <div style="background-color: #f9fafb; padding: 8px 12px; font-size: 0.8rem; color: #6b7280; border-bottom: 1px solid #e5e7eb;">Captured: ${new Date(e.captured_time).toLocaleTimeString()}</div>
-                            <div style="display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; justify-content: center;">
-                                ${e.camera_image_path ? `<div style="flex: 1; min-width: 200px; text-align: center;"><label style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #4b5563; display: block;">Camera</label><img src="${e.camera_image_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Camera Evidence"></div>` : ''}
-                                ${e.screenshot_path ? `<div style="flex: 1; min-width: 200px; text-align: center;"><label style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #4b5563; display: block;">Screenshot</label><img src="${e.screenshot_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Screenshot Evidence"></div>` : ''}
+                            <div style="display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; justify-content: space-around;">
+                                ${e.camera_image_path ? `
+                                    <div style="flex: 1; min-width: 300px; text-align: center;">
+                                        <h5 style="margin-top:0; margin-bottom:8px; font-size:0.9rem; color:#4b5563;">Webcam View</h5>
+                                        <img src="${e.camera_image_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Webcam Evidence">
+                                    </div>
+                                ` : ''}
+                                ${e.screenshot_path ? `
+                                    <div style="flex: 1; min-width: 300px; text-align: center;">
+                                        <h5 style="margin-top:0; margin-bottom:8px; font-size:0.9rem; color:#4b5563;">Screen Share View</h5>
+                                        <img src="${e.screenshot_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Evidence Screenshot">
+                                    </div>
+                                ` : ''}
                             </div>
                         </div>
                     `).join('') 
@@ -1270,6 +1412,8 @@ async function loadSystemLogs(page = 1) {
         // Super admin uses the same endpoint, which detects the role
         const response = await apiRequest(`/admin/dashboard/logs?${queryParams.toString()}`);
         const { logs, total_pages } = response;
+        
+        currentLogsData = logs; // Save to global scope for CSV export
 
         if (logs.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No logs found.</td></tr>';
@@ -1286,7 +1430,7 @@ async function loadSystemLogs(page = 1) {
                     ${log.department_name ? `<br><span style="font-size: 0.75rem; color: #666;">${log.department_name}</span>` : ''}
                 </td>
                 <td>${log.action}</td>
-                <td>${log.entity_type ? `${log.entity_type} (ID: ${log.entity_id})` : 'N/A'}</td>
+                    <td>${log.entity_type ? (log.exam_name ? `${log.entity_type} (${log.exam_name})` : `${log.entity_type} (ID: ${log.entity_id})`) : 'N/A'}</td>
                 <td>${log.ip_address || 'N/A'}</td>
             </tr>
         `).join('');
@@ -1306,6 +1450,42 @@ async function loadSystemLogs(page = 1) {
         tbody.innerHTML = `<tr><td colspan="5" style="color:red; text-align:center;">Error loading logs: ${error.message}</td></tr>`;
     }
 }
+
+function exportLogsCSV() {
+    if (!currentLogsData || currentLogsData.length === 0) {
+        alert("No logs to export");
+        return;
+    }
+    const headers = ["Timestamp", "User", "Role", "Department", "Action", "Entity", "IP Address"];
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(",")].concat(currentLogsData.map(l => 
+        `"${new Date(l.created_at).toLocaleString()}","${l.user_name}","${l.role}","${l.department_name || ''}","${l.action}","${l.entity_type || ''} ${l.exam_name ? `(${l.exam_name})` : (l.entity_id || '')}","${l.ip_address || ''}"`
+    )).join("\n");
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "superadmin_system_logs.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+async function resolveViolation(status) {
+    if (!currentViolationId) return;
+    const remarksEl = document.getElementById('dynamic-violation-remarks');
+    const remarks = remarksEl ? remarksEl.value : '';
+    
+    try {
+        const result = await apiRequest(`/superadmin/violations/${currentViolationId}/resolve`, 'PUT', { status, remarks });
+        alert(result.message || `Violation marked as ${status}`);
+        closeEvidenceModal();
+        loadViolationAnalytics(); // Refresh summary list
+        loadViolationHistory();   // Refresh history list
+    } catch (error) {
+        alert("Error: " + error.message);
+    }
+}
+
 // Generic Form Handler
 
 // --- Infrastructure Management Logic ---
@@ -1540,3 +1720,4 @@ async function handleDeleteInfrastructure(type, id, name) {
     } catch (err) {
         alert("Error: " + err.message);
     }
+}

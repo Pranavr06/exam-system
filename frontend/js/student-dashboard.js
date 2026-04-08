@@ -277,6 +277,25 @@ function closePasswordModal() {
     document.getElementById('exam-password-input').value = '';
 }
 
+function toggleExamPassword(btn) {
+    const passwordInput = document.getElementById("exam-password-input");
+    const icon = btn.querySelector("i");
+
+    if (passwordInput.type === "password") {
+        passwordInput.type = "text";
+        if (icon) {
+            icon.classList.remove("fa-eye");
+            icon.classList.add("fa-eye-slash");
+        }
+    } else {
+        passwordInput.type = "password";
+        if (icon) {
+            icon.classList.remove("fa-eye-slash");
+            icon.classList.add("fa-eye");
+        }
+    }
+}
+
 async function startExam(examId) {
     try {
         // This creates the attempt record on the backend before redirecting
@@ -345,15 +364,63 @@ async function loadViolations() {
             tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">No violations recorded. Good job!</td></tr>';
             return;
         }
-        tbody.innerHTML = violations.map(v => `
-            <tr>
-                <td><span style="color:#e53e3e; font-weight:bold;">${v.violation_type}</span></td>
-                <td>Exam ID: ${v.exam_id}</td> <!-- Ideally fetch exam name -->
-                <td>${new Date(v.timestamp).toLocaleString()}</td>
-                <td>${v.evidence_data ? 'Captured' : 'N/A'}</td>
-            </tr>
-        `).join('');
+
+        const grouped = {};
+        violations.forEach(v => {
+            const key = `exam_${v.exam_id || v.exam_name}`.replace(/\W/g, '_');
+            if (!grouped[key]) {
+                grouped[key] = { exam_name: v.exam_name || `Exam ID: ${v.exam_id}`, violations: [] };
+            }
+            grouped[key].violations.push(v);
+        });
+
+        tbody.innerHTML = Object.keys(grouped).map(key => {
+            const g = grouped[key];
+            return `
+                <tr style="cursor: pointer; background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;" onclick="toggleViolationDetails('student-details-${key}', 'student-icon-${key}')">
+                    <td colspan="2">
+                        <i class="fas fa-chevron-down" id="student-icon-${key}" style="margin-right: 8px; transition: transform 0.2s;"></i>
+                        <strong>${g.exam_name}</strong>
+                    </td>
+                    <td colspan="2">
+                        <span style="background:#FEE2E2; color:#DC2626; padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold;">
+                            ${g.violations.length} Violation(s)
+                        </span>
+                    </td>
+                </tr>
+                <tr id="student-details-${key}" style="display: none;">
+                    <td colspan="4" style="padding: 0; background-color: #f1f5f9;">
+                        <table style="width: 100%; margin: 0; background: transparent; border-collapse: collapse;">
+                            <tbody>
+                                ${g.violations.map(v => `
+                                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                                        <td style="width: 40%; padding-left: 40px;"><span style="color:#e53e3e; font-weight:bold;">${v.violation_type}</span></td>
+                                        <td style="width: 30%;">${new Date(v.timestamp).toLocaleString()}</td>
+                                        <td style="width: 30%; text-align: right; padding-right: 20px;">${v.evidence_data ? 'Captured' : 'N/A'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </td>
+                </tr>
+            `;
+        }).join('');
     } catch (error) {
         tbody.innerHTML = '<tr><td colspan="4" style="color:red; text-align:center;">Error loading violations.</td></tr>';
     }
 }
+
+// Global UI helper for grouped tables
+window.toggleViolationDetails = function(detailsId, iconId) {
+    const detailsRow = document.getElementById(detailsId);
+    const icon = document.getElementById(iconId);
+    if (detailsRow) {
+        if (detailsRow.style.display === 'none') {
+            detailsRow.style.display = 'table-row';
+            if (icon) icon.style.transform = 'rotate(180deg)';
+        } else {
+            detailsRow.style.display = 'none';
+            if (icon) icon.style.transform = 'rotate(0deg)';
+        }
+    }
+};

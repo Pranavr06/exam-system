@@ -585,6 +585,50 @@ def cleanup_archived_exams(days: int = Query(30, ge=1)):
         cursor.close()
         conn.close()
 
+@router.delete("/superadmin/violations/cleanup", dependencies=[Depends(require_super_admin)])
+def cleanup_old_violations(days: int = Query(30, ge=1)):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # 1. Fetch old evidence URLs to delete from Supabase
+        cursor.execute("""
+            SELECT e.screenshot_path 
+            FROM evidence e
+            JOIN violation v ON e.violation_id = v.violation_id
+            WHERE v.detected_at < DATE_SUB(NOW(), INTERVAL %s DAY) AND e.screenshot_path IS NOT NULL
+        """, (days,))
+        old_evidence = cursor.fetchall()
+
+        # 2. Attempt to delete physical files from Supabase
+        try:
+            from .proctoring import supabase_client, SUPABASE_BUCKET
+            if supabase_client and old_evidence:
+                keys_to_delete = []
+                for ev in old_evidence:
+                    path = ev['screenshot_path']
+                    bucket_path_marker = f"/object/public/{SUPABASE_BUCKET}/"
+                    if bucket_path_marker in path:
+                        file_key = path.split(bucket_path_marker)[1]
+                        keys_to_delete.append(file_key)
+                
+                if keys_to_delete:
+                    supabase_client.storage.from_(SUPABASE_BUCKET).remove(keys_to_delete)
+        except Exception as se:
+            print(f"Supabase cleanup warning: {se}")
+
+        # 3. Delete from Database
+        cursor.execute("""
+            DELETE FROM violation 
+            WHERE detected_at < DATE_SUB(NOW(), INTERVAL %s DAY)
+        """, (days,))
+        deleted_count = cursor.rowcount
+        
+        conn.commit()
+        return {"message": f"Cleanup complete. {deleted_count} violations older than {days} days were permanently deleted, including their screenshots."}
+    finally:
+        cursor.close()
+        conn.close()
+
 @router.get("/superadmin/teachers", dependencies=[Depends(require_super_admin)])
 def get_all_teachers(
     department_id: int = Query(None),
@@ -745,9 +789,9 @@ def get_violation_analytics(status: str = Query(None), exam_search: str = Query(
         cursor.execute(f"SELECT violation_type, COUNT(*) as count FROM violation WHERE {where_clause} GROUP BY violation_type", tuple(params))
         stats["by_type"] = cursor.fetchall()
 
-        # 5. Recent Violations
+        # 5. Recent Violations (respects status filter)
         cursor.execute(f"""
-            SELECT v.violation_id, s.name, s.usn, d.department_name, e.exam_name, v.violation_type, v.detected_at as timestamp, v.review_status
+            SELECT v.violation_id, s.name as student_name, s.usn, d.department_name, e.exam_name, v.violation_type, v.detected_at as timestamp, v.review_status
             FROM violation v 
             JOIN student s ON v.student_id = s.student_id 
             JOIN department d ON s.department_id = d.department_id 
@@ -837,6 +881,93 @@ def get_superadmin_violation_history(
             "page": page,
             "total_pages": (total + limit - 1) // limit
         }
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/superadmin/exams/{exam_id}/results", dependencies=[Depends(require_super_admin)])
+def get_exam_results_superadmin(exam_id: int):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT r.result_id, s.name, s.usn, r.total_marks, r.result_status, r.generated_time
+            FROM result r
+            JOIN student s ON r.student_id = s.student_id
+            WHERE r.exam_id = %s
+            ORDER BY r.total_marks DESC
+        """, (exam_id,))
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.get("/superadmin/violations/{violation_id}", dependencies=[Depends(require_super_admin)])
+def get_violation_details_superadmin(violation_id: int):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT v.*, s.name as student_name, s.usn, e.exam_name, q.question_text
+            FROM violation v
+            JOIN student s ON v.student_id = s.student_id
+            JOIN exam e ON v.exam_id = e.exam_id
+            LEFT JOIN question q ON v.question_id = q.question_id
+            WHERE v.violation_id = %s
+        """, (violation_id,))
+        violation = cursor.fetchone()
+        if not violation:
+            raise HTTPException(status_code=404, detail="Violation not found")
+        
+        cursor.execute("SELECT * FROM evidence WHERE violation_id = %s", (violation_id,))
+        violation["evidence"] = cursor.fetchall()
+        return violation
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.put("/superadmin/violations/{violation_id}/resolve", dependencies=[Depends(require_super_admin)])
+def resolve_violation_superadmin(
+    violation_id: int, 
+    request: Request,
+    status: str = Body(...), 
+    remarks: str = Body(None),
+    user=Depends(require_super_admin)
+):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT v.review_status, v.student_id, v.exam_id, v.question_id, e.department_id, s.name as student_name, s.usn
+            FROM violation v 
+            JOIN exam e ON v.exam_id = e.exam_id 
+            JOIN student s ON v.student_id = s.student_id
+            WHERE v.violation_id = %s
+        """, (violation_id,))
+        details = cursor.fetchone()
+        
+        if not details:
+             raise HTTPException(status_code=404, detail="Violation not found")
+
+        cursor.execute("""
+            UPDATE violation 
+            SET review_status = %s, admin_remarks = %s, reviewed_by_admin = %s, reviewed_at = NOW()
+            WHERE violation_id = %s
+        """, (status, remarks, user["user_id"], violation_id))
+        
+        if status == 'Resolved':
+            student_id = details["student_id"]
+            cursor.execute("SELECT COUNT(*) as count FROM violation WHERE student_id = %s AND review_status = 'Resolved'", (student_id,))
+            if cursor.fetchone()["count"] > 3:
+                cursor.execute("UPDATE student SET risk_status = 'High Risk' WHERE student_id = %s", (student_id,))
+
+        log_action(
+            user["user_id"], "super_admin", details["department_id"], 
+            f"Resolved Violation: {status} for {details['student_name']} ({details['usn']})", 
+            "violation", violation_id, ip_address=request.client.host
+        )
+        conn.commit()
+        return {"message": f"Violation marked as {status}"}
     finally:
         cursor.close()
         conn.close()

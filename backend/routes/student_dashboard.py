@@ -219,7 +219,7 @@ def get_student_violations(user=Depends(get_current_user)):
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("""
-            SELECT v.*, v.detected_at as timestamp
+            SELECT v.*, v.detected_at as timestamp, e.exam_name
             FROM violation v
             JOIN exam e ON v.exam_id = e.exam_id
             WHERE v.student_id = %s AND (e.is_archived = 0 OR e.is_archived IS NULL)

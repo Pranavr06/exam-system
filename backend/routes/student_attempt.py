@@ -151,7 +151,7 @@ def get_exam_questions(exam_id: int, user=Depends(get_current_user)):
             }
 
         cursor.execute("""
-            SELECT a.status, a.start_time, e.duration, e.exam_name
+            SELECT a.status, a.start_time, e.duration, e.exam_name, e.mode
             FROM attempt a
             JOIN exam e ON a.exam_id = e.exam_id
             WHERE a.student_id = %s AND a.exam_id = %s
@@ -196,7 +196,9 @@ def get_exam_questions(exam_id: int, user=Depends(get_current_user)):
         return {
             "questions": list(questions.values()),
             "remaining_seconds": remaining_seconds,
-            "exam_name": attempt["exam_name"]
+            "exam_name": attempt["exam_name"],
+            "exam_mode": attempt["mode"],
+            "student_id": user["user_id"]
         }
 
     finally:

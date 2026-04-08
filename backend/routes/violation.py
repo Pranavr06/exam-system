@@ -9,9 +9,9 @@ router = APIRouter()
 # Weighted scoring model
 VIOLATION_WEIGHTS = {
     "TAB_SWITCH": 1.0,
-    "WINDOW_BLUR": 0.5,
-    "MOBILE_DETECTED": 5.0,
-    "REPEATED_FOCUS_LOSS": 2.0
+    "PHONE": 5.0,
+    "MULTI_PERSON": 3.0,
+    "NO_PERSON": 2.0
 }
 
 

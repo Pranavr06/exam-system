@@ -146,7 +146,7 @@ def get_admin_dashboard_stats(user=Depends(get_current_user)):
         conn.close()
 
 @router.get("/admin/violations/stats")
-def get_admin_violation_stats(status: str = Query(None), exam_id: int = Query(None), violation_type: str = Query(None), user=Depends(get_current_user)):
+def get_admin_violation_stats(status: str = Query(None), exam_search: str = Query(None), violation_type: str = Query(None), user=Depends(get_current_user)):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -167,9 +167,9 @@ def get_admin_violation_stats(status: str = Query(None), exam_id: int = Query(No
         if status:
             base_where += " AND v.review_status = %s"
             params.append(status)
-        if exam_id:
-            base_where += " AND v.exam_id = %s"
-            params.append(exam_id)
+        if exam_search:
+            base_where += " AND e.exam_name LIKE %s"
+            params.append(f"%{exam_search}%")
         if violation_type:
             base_where += " AND v.violation_type = %s"
             params.append(violation_type)
@@ -230,7 +230,7 @@ def get_admin_violation_stats(status: str = Query(None), exam_id: int = Query(No
         """, tuple(params))
         stats["by_type"] = cursor.fetchall()
 
-        # 4. Recent Violations
+        # 4. Recent Violations (respects status filter)
         cursor.execute(f"""
             SELECT v.violation_id, s.name, s.usn, d.department_name, e.exam_name, v.violation_type, v.detected_at as timestamp, v.review_status
             FROM violation v 
@@ -351,20 +351,53 @@ def resolve_violation(
              # To be precise we could select first, but this is efficient.
              pass 
         
-        # Auto-flag High Risk Student
-        if status == 'Resolved':
-            cursor.execute("""
-                SELECT v.student_id FROM violation v 
-                JOIN exam e ON v.exam_id = e.exam_id
-                WHERE v.violation_id = %s AND e.department_id = %s
-            """, (violation_id, dept_id))
-            row = cursor.fetchone()
-            if row:
-                student_id = row[0]
-                cursor.execute("SELECT COUNT(*) FROM violation WHERE student_id = %s AND review_status = 'Resolved'", (student_id,))
-                count = cursor.fetchone()[0]
-                if count > 3:
-                    cursor.execute("UPDATE student SET risk_status = 'High Risk' WHERE student_id = %s", (student_id,))
+        # Fetch details to handle Marks and Risk
+        cursor.execute("""
+            SELECT v.student_id, v.exam_id, v.question_id FROM violation v 
+            JOIN exam e ON v.exam_id = e.exam_id
+            WHERE v.violation_id = %s AND e.department_id = %s
+        """, (violation_id, dept_id))
+        row = cursor.fetchone()
+        
+        if row:
+            student_id = row[0]
+            exam_id = row[1]
+            question_id = row[2]
+            
+            # Auto-flag High Risk Student (Dynamically Recalculates)
+            cursor.execute("SELECT COUNT(*) FROM violation WHERE student_id = %s AND review_status = 'Resolved'", (student_id,))
+            count = cursor.fetchone()[0]
+            new_risk = 'High Risk' if count > 3 else 'Normal'
+            cursor.execute("UPDATE student SET risk_status = %s WHERE student_id = %s", (new_risk, student_id))
+
+            # --- MARKS PENALTY LOGIC ---
+            if question_id:
+                if status == 'Resolved':
+                    cursor.execute("""
+                        UPDATE answer SET marks_awarded = 0 
+                        WHERE student_id = %s AND exam_id = %s AND question_id = %s
+                    """, (student_id, exam_id, question_id))
+                elif status == 'Dismissed':
+                    # Ensure there are no OTHER active 'Resolved' violations for this same question before restoring marks
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM violation 
+                        WHERE student_id = %s AND exam_id = %s AND question_id = %s AND review_status = 'Resolved' AND violation_id != %s
+                    """, (student_id, exam_id, question_id, violation_id))
+                    if cursor.fetchone()[0] == 0:
+                        cursor.execute("""
+                            UPDATE answer a
+                            JOIN question_option qo ON a.selected_option_id = qo.option_id
+                            JOIN question q ON a.question_id = q.question_id
+                            SET a.marks_awarded = CASE WHEN qo.is_correct = 1 THEN q.marks ELSE 0 END
+                            WHERE a.student_id = %s AND a.exam_id = %s AND a.question_id = %s
+                        """, (student_id, exam_id, question_id))
+                
+                # Recalculate and save Total Result Marks
+                cursor.execute("""
+                    UPDATE result r
+                    SET r.total_marks = (SELECT COALESCE(SUM(marks_awarded), 0) FROM answer WHERE student_id = %s AND exam_id = %s)
+                    WHERE r.student_id = %s AND r.exam_id = %s
+                """, (student_id, exam_id, student_id, exam_id))
 
         conn.commit()
         return {"message": f"Violation marked as {status}"}
@@ -428,12 +461,14 @@ def get_system_logs(
             SELECT 
                 sl.log_id, sl.user_id, sl.role, sl.action, sl.entity_type, sl.entity_id, sl.ip_address, sl.created_at,
                 COALESCE(a.name, t.name, s.name, 'Unknown') as user_name,
-                d.department_name
+                d.department_name,
+                ex.exam_name
             FROM system_logs sl
             LEFT JOIN admin a ON sl.role = 'admin' AND sl.user_id = a.admin_id
             LEFT JOIN teacher t ON sl.role = 'teacher' AND sl.user_id = t.teacher_id
             LEFT JOIN student s ON sl.role = 'student' AND sl.user_id = s.student_id
             LEFT JOIN department d ON sl.department_id = d.department_id
+            LEFT JOIN exam ex ON sl.entity_type = 'exam' AND sl.entity_id = ex.exam_id
             {where_clause} 
             ORDER BY sl.created_at DESC 
             LIMIT %s OFFSET %s

@@ -347,21 +347,48 @@ async function loadDepartmentSectionsForFilter() {
 async function handleCreateExam(event) {
     event.preventDefault();
     const form = event.target;
+    const submitBtn = form.querySelector('button[type="submit"]') || document.getElementById('create-exam-btn');
+    const originalBtnText = submitBtn ? submitBtn.textContent : 'Create Exam';
+    
     const formData = new FormData(form);
     
     // Handle multiple select for sections
     const sectionSelect = document.getElementById('exam-section');
     const selectedSections = Array.from(sectionSelect.selectedOptions).map(option => parseInt(option.value));
 
+    // 1. Validate Date
+    const examDate = formData.get('exam_date');
+    if (!examDate) return alert("Please select a date and time for the exam.");
+    if (new Date(examDate) < new Date()) {
+        return alert("Cannot schedule an exam in the past.");
+    }
+
+    // 2. Validate Duration
+    const duration = parseInt(formData.get('duration'));
+    if (isNaN(duration) || duration < 5 || duration > 180) {
+        return alert("Please enter a valid duration between 5 and 180 minutes.");
+    }
+
+    // 3. Validate Selection
+    if (selectedSections.length === 0) {
+        return alert("Please select at least one section for this exam.");
+    }
+
     const payload = {
         exam_name: formData.get('exam_name'),
         subject_id: parseInt(formData.get('subject_id')),
-        duration: parseInt(formData.get('duration')),
+        duration: duration,
         total_marks: parseInt(formData.get('total_marks')),
-        exam_date: formData.get('exam_date'),
+        exam_date: examDate,
         section_ids: selectedSections,
         mode: formData.get('mode') || 'ONLINE'
     };
+
+    // 4. Disable Button & Show Loading
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Processing...';
+    }
 
     // Only include center data if mode is CENTER
     if (payload.mode === 'CENTER') {
@@ -380,6 +407,11 @@ async function handleCreateExam(event) {
         loadExistingExams();
     } catch (error) {
         alert("Error: " + error.message);
+    } finally {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalBtnText;
+        }
     }
 }
 
@@ -528,6 +560,14 @@ function resetExamForm() {
     document.getElementById('exam_id_hidden').value = '';
     document.getElementById('create-exam-btn').textContent = 'Create Exam';
     document.getElementById('cancel-exam-edit-btn').style.display = 'none';
+
+    // Set dynamic min date
+    const dateInput = document.getElementById('exam-date');
+    if (dateInput) {
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        dateInput.min = now.toISOString().slice(0, 16);
+    }
 }
 
 async function loadExistingExams() {
@@ -1041,10 +1081,41 @@ async function restoreExam(examId) {
 }
 
 async function openReExamModal(examId, duration) {
-    document.getElementById('re-exam-modal').style.display = 'block';
+    const modal = document.getElementById('re-exam-modal');
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+
+    const modalContent = modal.querySelector('.modal-content');
+    if (modalContent) {
+        modalContent.style.margin = '0';
+        modalContent.style.borderRadius = '8px';
+        modalContent.style.maxWidth = '500px';
+        modalContent.style.width = '90%';
+    }
+
     document.getElementById('re-exam-id').value = examId;
     document.body.style.overflow = 'hidden';
-    document.getElementById('re-exam-duration').value = duration;
+    
+    const durationInput = document.getElementById('re-exam-duration');
+    durationInput.value = duration;
+    durationInput.min = 5;
+    durationInput.max = 180;
+
+    const dateInput = document.getElementById('re-exam-date');
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    dateInput.min = now.toISOString().slice(0, 16);
+    dateInput.value = "";
+
+    document.getElementById('re-exam-type').value = "class";
+    toggleReExamType();
+
+    const submitBtn = document.querySelector('#re-exam-modal button[onclick="submitReExam()"]');
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Schedule Re-Exam';
+    }
     
     // Load students for this exam (from results)
     const studentSelect = document.getElementById('re-exam-students');
@@ -1054,14 +1125,14 @@ async function openReExamModal(examId, duration) {
         const results = await apiRequest(`/teacher/exams/${examId}/attempts`);
         studentSelect.innerHTML = '';
         if(results.length === 0) {
-             studentSelect.innerHTML = '<option disabled>No students found in results yet.</option>';
+             studentSelect.innerHTML = '<option disabled value="">No students found in results yet.</option>';
         } else {
             results.forEach(r => {
                 studentSelect.appendChild(new Option(`${r.student_name} (${r.usn}) - ${r.result_status || 'Absent'}`, r.student_id));
             });
         }
     } catch (e) {
-        studentSelect.innerHTML = '<option disabled>Error loading students</option>';
+        studentSelect.innerHTML = '<option disabled value="">Error loading students</option>';
     }
 }
 
@@ -1078,17 +1149,39 @@ function toggleReExamType() {
 async function submitReExam() {
     const examId = document.getElementById('re-exam-id').value;
     const type = document.getElementById('re-exam-type').value;
-    const date = document.getElementById('re-exam-date').value;
-    const duration = document.getElementById('re-exam-duration').value;
+    const dateInput = document.getElementById('re-exam-date');
+    const durationInput = document.getElementById('re-exam-duration');
+    const submitBtn = document.querySelector('#re-exam-modal button[onclick="submitReExam()"]');
     
-    const payload = { exam_date: date, duration: parseInt(duration) };
+    // 1. Validate Date
+    if (!dateInput.value) return alert("Please select a date and time for the re-exam.");
+    if (new Date(dateInput.value) < new Date()) return alert("Cannot schedule a re-exam in the past.");
+
+    // 2. Validate Duration
+    const duration = parseInt(durationInput.value);
+    if (isNaN(duration) || duration < 5 || duration > 180) {
+        return alert("Please enter a valid duration between 5 and 180 minutes.");
+    }
+    
+    const payload = { exam_date: dateInput.value, duration: duration };
     let url = `/teacher/exams/${examId}/re-exam/class`;
 
+    // 3. Validate Students
     if (type === 'students') {
-        const students = Array.from(document.getElementById('re-exam-students').selectedOptions).map(o => parseInt(o.value));
-        if (students.length === 0) return alert("Please select at least one student.");
+        const studentSelect = document.getElementById('re-exam-students');
+        const students = Array.from(studentSelect.selectedOptions).map(o => parseInt(o.value)).filter(val => !isNaN(val));
+        
+        if (students.length === 0) {
+            return alert("You selected 'Specific Students' but haven't chosen any. Please select at least one student.");
+        }
         payload.student_ids = students;
         url = `/teacher/exams/${examId}/re-exam/students`;
+    }
+
+    // 4. Disable Button & Show Loading
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Processing...';
     }
 
     try {
@@ -1096,7 +1189,13 @@ async function submitReExam() {
         alert(res.message);
         closeReExamModal();
         loadMyExams();
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { 
+        alert("Error: " + e.message); 
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Schedule Re-Exam';
+        }
+    }
 }
 
 async function loadTeacherResults() {
@@ -1351,27 +1450,58 @@ async function loadTeacherViolationAnalytics() {
             </div>
         `;
 
+        // Rename table heading dynamically back to Recent
+        document.querySelectorAll('h2, h3').forEach(h => {
+            if (h.textContent.includes('Pending Violations')) h.textContent = 'Recent Violations';
+        });
+
         // 2. Recent Violations Table
         const recentBody = document.getElementById('teacher-recent-violations-body');
         if (stats.recent.length === 0) {
-            recentBody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px; color:#666;">No violations found.</td></tr>';
+            recentBody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px; color:#666;">No recent violations.</td></tr>';
         } else {
-            recentBody.innerHTML = stats.recent.map(v => `
-                <tr>
-                    <td><strong>${v.name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
-                    <td>${v.exam_name}</td>
-                    <td><span style="color:#DC2626; font-weight:500;">${v.violation_type}</span></td>
-                    <td><span class="status-badge" style="
-                        background-color: ${v.review_status === 'Resolved' ? '#DCFCE7' : v.review_status === 'Dismissed' ? '#F1F5F9' : '#FEF2F2'};
-                        color: ${v.review_status === 'Resolved' ? '#16A34A' : v.review_status === 'Dismissed' ? '#64748B' : '#DC2626'};
-                        padding: 4px 8px; border-radius: 12px; font-size: 0.75rem;
-                    ">
-                        ${v.review_status}
-                    </span></td>
-                    <td>${new Date(v.timestamp).toLocaleTimeString()}</td>
-                    <td><button class="btn-edit" onclick="viewEvidence(${v.violation_id})" style="background-color: #3182ce; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 500; border: none;">Review</button></td>
-                </tr>
-            `).join('');
+            const groupedRecent = {};
+            stats.recent.forEach(v => {
+                const key = `recent_${v.usn}_${v.exam_name}`.replace(/\W/g, '_');
+                if (!groupedRecent[key]) {
+                    groupedRecent[key] = { name: v.name || v.student_name, usn: v.usn, exam_name: v.exam_name, violations: [] };
+                }
+                groupedRecent[key].violations.push(v);
+            });
+
+            recentBody.innerHTML = Object.keys(groupedRecent).map(key => {
+                const g = groupedRecent[key];
+                return `
+                    <tr style="cursor: pointer; background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;" onclick="toggleViolationDetails('recent-details-${key}', 'recent-icon-${key}')">
+                        <td>
+                            <i class="fas fa-chevron-down" id="recent-icon-${key}" style="margin-right: 8px; transition: transform 0.2s;"></i>
+                            <strong>${g.name}</strong> <span style="font-size:0.8em; color:#666;">(${g.usn})</span>
+                        </td>
+                        <td>${g.exam_name}</td>
+                        <td colspan="4">
+                            <span style="background:#FEE2E2; color:#DC2626; padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold;">
+                                ${g.violations.length} Violation(s)
+                            </span>
+                        </td>
+                    </tr>
+                    <tr id="recent-details-${key}" style="display: none;">
+                        <td colspan="6" style="padding: 0; background-color: #f1f5f9;">
+                            <table style="width: 100%; margin: 0; background: transparent; border-collapse: collapse;">
+                                <tbody>
+                                    ${g.violations.map(v => `
+                                        <tr style="border-bottom: 1px solid #e2e8f0;">
+                                            <td style="width: 30%; padding-left: 40px;"><span style="color:#DC2626; font-weight:500;">${v.violation_type}</span></td>
+                                            <td style="width: 20%;"><span class="status-badge" style="background-color: ${v.review_status === 'Resolved' ? '#DCFCE7' : v.review_status === 'Dismissed' ? '#F1F5F9' : '#FEF2F2'}; color: ${v.review_status === 'Resolved' ? '#16A34A' : v.review_status === 'Dismissed' ? '#64748B' : '#DC2626'}; padding: 4px 8px; border-radius: 12px; font-size: 0.75rem;">${v.review_status}</span></td>
+                                            <td style="width: 25%;">${new Date(v.timestamp).toLocaleTimeString()}</td>
+                                            <td style="width: 25%; text-align: right; padding-right: 20px;"><button class="btn-edit" onclick="viewEvidence(${v.violation_id})" style="background-color: #3182ce; color: white; padding: 4px 8px; border-radius: 6px; font-weight: 500; border: none;">Review Evidence</button></td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
         }
 
     } catch (error) {
@@ -1411,17 +1541,49 @@ async function loadViolationHistory(page = 1) {
             return;
         }
 
-        tbody.innerHTML = data.history.map(v => `
-            <tr>
-                <td><strong>${v.student_name}</strong> <span style="font-size:0.8em; color:#666;">(${v.usn})</span></td>
-                <td>${v.exam_name}</td>
-                <td><span style="color:#DC2626;">${v.violation_type}</span></td>
-                <td><span class="status-badge ${v.review_status === 'Pending' ? 'inactive' : 'active'}">${v.review_status}</span></td>
-                <td>${new Date(v.timestamp).toLocaleString()}</td>
-                <td><small>${v.remarks || '-'}</small></td>
-                <td><button class="btn-edit" onclick="viewEvidence(${v.violation_id})" style="background-color: #3182ce; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 500; border: none;">View</button></td>
-            </tr>
-        `).join('');
+        const grouped = {};
+        data.history.forEach(v => {
+            const key = `history_${v.usn}_${v.exam_name}`.replace(/\W/g, '_');
+            if (!grouped[key]) {
+                grouped[key] = { student_name: v.student_name || v.name, usn: v.usn, exam_name: v.exam_name, violations: [] };
+            }
+            grouped[key].violations.push(v);
+        });
+
+        tbody.innerHTML = Object.keys(grouped).map(key => {
+            const g = grouped[key];
+            return `
+                <tr style="cursor: pointer; background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;" onclick="toggleViolationDetails('details-${key}', 'icon-${key}')">
+                    <td>
+                        <i class="fas fa-chevron-down" id="icon-${key}" style="margin-right: 8px; transition: transform 0.2s;"></i>
+                        <strong>${g.student_name}</strong> <span style="font-size:0.8em; color:#666;">(${g.usn})</span>
+                    </td>
+                    <td>${g.exam_name}</td>
+                    <td colspan="5">
+                        <span style="background:#FEE2E2; color:#DC2626; padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold;">
+                            ${g.violations.length} Violation(s)
+                        </span>
+                    </td>
+                </tr>
+                <tr id="details-${key}" style="display: none;">
+                    <td colspan="7" style="padding: 0; background-color: #f1f5f9;">
+                        <table style="width: 100%; margin: 0; background: transparent; border-collapse: collapse;">
+                            <tbody>
+                                ${g.violations.map(v => `
+                                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                                        <td style="width: 25%; padding-left: 40px;"><span style="color:#DC2626;">${v.violation_type}</span></td>
+                                        <td style="width: 15%;"><span class="status-badge ${v.review_status === 'Pending' ? 'inactive' : 'active'}">${v.review_status}</span></td>
+                                        <td style="width: 20%;">${new Date(v.timestamp).toLocaleString()}</td>
+                                        <td style="width: 20%;"><small>${v.remarks || '-'}</small></td>
+                                        <td style="width: 20%; text-align: right; padding-right: 20px;"><button class="btn-edit" onclick="viewEvidence(${v.violation_id})" style="background-color: #3182ce; color: white; padding: 4px 8px; border-radius: 6px; font-weight: 500; border: none;">View Evidence</button></td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </td>
+                </tr>
+            `;
+        }).join('');
 
         if (pagination) {
             let paginationHtml = '';
@@ -1459,6 +1621,10 @@ async function viewEvidence(id) {
         modalContent.style.maxHeight = '90vh';
         modalContent.style.overflowY = 'auto';
         content.style.padding = '24px';
+        
+        // Hide hardcoded HTML footer to prevent duplicate resolve options
+        const oldFooter = modalContent.querySelector('.modal-footer');
+        if (oldFooter) oldFooter.style.display = 'none';
     }
 
     content.innerHTML = '<div class="spinner"></div>';
@@ -1526,16 +1692,9 @@ async function viewEvidence(id) {
                         <div style="border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 16px; overflow: hidden;">
                             <div style="background-color: #f9fafb; padding: 8px 12px; font-size: 0.8rem; color: #6b7280; border-bottom: 1px solid #e5e7eb;">Captured: ${new Date(e.captured_time).toLocaleTimeString()}</div>
                             <div style="display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; justify-content: center;">
-                                ${e.camera_image_path ? `
-                                    <div style="flex: 1; min-width: 200px; text-align: center;">
-                                        <label style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #4b5563; display: block;">Camera</label>
-                                        <img src="${e.camera_image_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Camera Evidence">
-                                    </div>
-                                ` : ''}
-                                ${e.screenshot_path ? `
-                                    <div style="flex: 1; min-width: 200px; text-align: center;">
-                                        <label style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #4b5563; display: block;">Screenshot</label>
-                                        <img src="${e.screenshot_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Screenshot Evidence">
+                                ${(e.screenshot_path || e.camera_image_path) ? `
+                                    <div style="flex: 1; text-align: center;">
+                                        <img src="${e.screenshot_path || e.camera_image_path}" onclick="openFullScreenImage(this.src)" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer;" alt="Evidence Screenshot">
                                     </div>
                                 ` : ''}
                             </div>
@@ -1565,8 +1724,8 @@ async function viewEvidence(id) {
         } else {
             contentHtml += `
                 <div style="border-top: 1px solid #e5e7eb; padding: 16px 24px; background-color: #f9fafb; margin: 24px -24px -24px -24px; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
-                    <label for="violation-remarks" style="font-size: 0.9rem; font-weight: 600; color: #374151; display: block; margin-bottom: 8px;">Add Remarks & Resolve</label>
-                    <textarea id="violation-remarks" placeholder="Add optional remarks to justify your decision..." style="width: 100%; min-height: 60px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem; margin-bottom: 12px; box-sizing: border-box; resize: vertical;"></textarea>
+                    <label for="dynamic-violation-remarks" style="font-size: 0.9rem; font-weight: 600; color: #374151; display: block; margin-bottom: 8px;">Add Remarks & Resolve</label>
+                    <textarea id="dynamic-violation-remarks" placeholder="Add optional remarks to justify your decision..." style="width: 100%; min-height: 60px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem; margin-bottom: 12px; box-sizing: border-box; resize: vertical;"></textarea>
                     <div style="display: flex; justify-content: flex-end; gap: 12px;">
                         <button onclick="resolveViolation('Dismissed')" style="background-color: #6b7280; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.9rem;">Dismiss</button>
                         <button onclick="resolveViolation('Resolved')" style="background-color: #16A34A; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.9rem;">Confirm Violation</button>
@@ -1589,7 +1748,8 @@ function closeEvidenceModal() {
 
 async function resolveViolation(status) {
     if (!currentViolationId) return;
-    const remarks = document.getElementById('violation-remarks').value;
+    const remarksEl = document.getElementById('dynamic-violation-remarks');
+    const remarks = remarksEl ? remarksEl.value : '';
     
     try {
         await apiRequest(`/teacher/violations/${currentViolationId}/resolve`, 'PUT', { status, remarks });
@@ -1619,4 +1779,37 @@ function openFullScreenImage(src) {
     }
     document.getElementById('fullscreen-image').src = src;
     overlay.style.display = 'flex';
+}
+
+// Global UI helper for grouped tables
+window.toggleViolationDetails = function(detailsId, iconId) {
+    const detailsRow = document.getElementById(detailsId);
+    const icon = document.getElementById(iconId);
+    if (detailsRow) {
+        if (detailsRow.style.display === 'none') {
+            detailsRow.style.display = 'table-row';
+            if (icon) icon.style.transform = 'rotate(180deg)';
+        } else {
+            detailsRow.style.display = 'none';
+            if (icon) icon.style.transform = 'rotate(0deg)';
+        }
+    }
+};
+
+function togglePasswordVisibility(inputId, btn) {
+    const input = document.getElementById(inputId);
+    const icon = btn.querySelector("i");
+    if (input && input.type === "password") {
+        input.type = "text";
+        if (icon) {
+            icon.classList.remove("fa-eye");
+            icon.classList.add("fa-eye-slash");
+        }
+    } else if (input) {
+        input.type = "password";
+        if (icon) {
+            icon.classList.remove("fa-eye-slash");
+            icon.classList.add("fa-eye");
+        }
+    }
 }

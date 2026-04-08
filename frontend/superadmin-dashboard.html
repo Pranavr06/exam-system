@@ -171,7 +171,15 @@
                         <input type="hidden" name="admin_id">
                         <div class="form-group"><label for="admin-name">Name</label><input id="admin-name" type="text" name="name" required></div>
                         <div class="form-group"><label for="admin-email">Email</label><input id="admin-email" type="email" name="email" required></div>
-                        <div class="form-group"><label for="admin-password">Password</label><input id="admin-password" type="password" name="password" required></div>
+                    <div class="form-group">
+                        <label for="admin-password">Password</label>
+                        <div style="position: relative; display: flex; align-items: center;">
+                            <input id="admin-password" type="password" name="password" required style="width: 100%; padding-right: 40px;">
+                            <button type="button" onclick="togglePasswordVisibility('admin-password', this)" style="position: absolute; right: 10px; background: none; border: none; cursor: pointer; color: #666;">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
                         <div class="form-group"><label for="admin-department">Department</label><select id="admin-department" name="department_id" required></select></div>
                         <div class="form-actions"><button type="submit" class="submit-btn">Save Admin</button>
                         <button type="button" class="submit-btn btn-secondary" style="display: none;" onclick="resetAdminForm()">Cancel</button></div>
@@ -521,7 +529,15 @@
                     <p style="margin-bottom: 15px; color: #666;">This will create a new admin and transfer all department data (Exams, Teachers, Students) from <strong id="replace-current-name"></strong> to the new admin, then delete the old account.</p>
                     <div class="form-group"><label>New Admin Name</label><input type="text" name="new_name" required></div>
                     <div class="form-group"><label>New Admin Email</label><input type="email" name="new_email" required></div>
-                    <div class="form-group"><label>New Password</label><input type="password" name="new_password" required></div>
+                    <div class="form-group">
+                        <label>New Password</label>
+                        <div style="position: relative; display: flex; align-items: center;">
+                            <input type="password" id="replace-admin-password" name="new_password" required style="width: 100%; padding-right: 40px;">
+                            <button type="button" onclick="togglePasswordVisibility('replace-admin-password', this)" style="position: absolute; right: 10px; background: none; border: none; cursor: pointer; color: #666;">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
                     <div class="form-actions" style="justify-content: flex-end; margin-top: 20px;">
                         <button type="button" class="submit-btn btn-secondary" onclick="closeModal('replace-admin-modal')">Cancel</button>
                         <button type="submit" class="submit-btn" style="background-color: #D97706;">Replace Admin</button>
@@ -565,6 +581,43 @@
                         <button type="submit" class="submit-btn" style="background-color: #3182ce;">Save Changes</button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <!-- Results Modal -->
+        <div id="results-modal" class="sa-modal">
+            <div class="sa-modal-content" style="max-width: 800px; width: 90%;">
+                <div class="sa-modal-header">
+                    <h3 class="sa-modal-title">Exam Results</h3>
+                    <button class="sa-modal-close" onclick="closeModal('results-modal')">&times;</button>
+                </div>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table class="sa-table" id="results-table">
+                        <thead>
+                            <tr>
+                                <th>USN</th>
+                                <th>Name</th>
+                                <th>Score</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Evidence Modal -->
+        <div id="evidence-modal" class="sa-modal">
+            <div class="sa-modal-content modal-content">
+                <div class="sa-modal-header">
+                    <h3 class="sa-modal-title">Violation Evidence</h3>
+                    <button class="sa-modal-close" onclick="closeEvidenceModal()">&times;</button>
+                </div>
+                <div id="evidence-content" style="padding: 24px;">
+                    <!-- Dynamic content -->
+                </div>
             </div>
         </div>
     </div>
