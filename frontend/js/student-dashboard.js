@@ -210,6 +210,13 @@ async function loadUpcomingExams(isPreview = false) {
             } else {
                 actionBtn = `<span style="color:#718096; font-size:0.9rem;">Scheduled</span>`;
             }
+            
+            if (isCenter) {
+                actionBtn = `<div style="display: flex; gap: 8px; align-items: center;">
+                                ${actionBtn}
+                                <button onclick="viewVenue(${e.exam_id})" class="submit-btn" style="background-color: #3182ce; padding: 5px 10px; font-size: 0.8rem; border: none; white-space: nowrap;">View Venue</button>
+                             </div>`;
+            }
 
             if (isPreview) {
                 return `

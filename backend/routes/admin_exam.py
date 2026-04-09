@@ -161,6 +161,21 @@ def create_exam(
                 overlap_details = ", ".join([f"'{o['exam_name']}' (Section {o['section_name']})" for o in overlaps])
                 raise HTTPException(status_code=400, detail=f"Time conflict! The selected sections already have exams scheduled: {overlap_details}")
 
+        # ✅ Check for Lab Booking Conflicts
+        if mode == "CENTER" and lab_id:
+            lab_overlap_query = """
+                SELECT exam_name FROM exam
+                WHERE lab_id = %s
+                  AND status != 'completed' AND is_archived = 0
+                  AND date < DATE_ADD(%s, INTERVAL %s MINUTE)
+                  AND DATE_ADD(date, INTERVAL duration MINUTE) > %s
+            """
+            cursor.execute(lab_overlap_query, (lab_id, formatted_date, duration, formatted_date))
+            lab_overlaps = cursor.fetchall()
+            if lab_overlaps:
+                overlap_details = ", ".join([f"'{o['exam_name']}'" for o in lab_overlaps])
+                raise HTTPException(status_code=400, detail=f"Lab conflict! The selected lab is already booked for: {overlap_details}")
+
         cursor.execute(
             """
             INSERT INTO exam (
@@ -835,6 +850,21 @@ def update_exam(
                 overlap_details = ", ".join([f"'{o['exam_name']}' (Section {o['section_name']})" for o in overlaps])
                 raise HTTPException(status_code=400, detail=f"Time conflict! Scheduled exams overlap: {overlap_details}")
         
+        # ✅ Check for Lab Booking Conflicts
+        if mode == "CENTER" and lab_id:
+            lab_overlap_query = """
+                SELECT exam_name FROM exam
+                WHERE lab_id = %s AND exam_id != %s
+                  AND status != 'completed' AND is_archived = 0
+                  AND date < DATE_ADD(%s, INTERVAL %s MINUTE)
+                  AND DATE_ADD(date, INTERVAL duration MINUTE) > %s
+            """
+            cursor.execute(lab_overlap_query, (lab_id, exam_id, formatted_date, duration, formatted_date))
+            lab_overlaps = cursor.fetchall()
+            if lab_overlaps:
+                overlap_details = ", ".join([f"'{o['exam_name']}'" for o in lab_overlaps])
+                raise HTTPException(status_code=400, detail=f"Lab conflict! The selected lab is already booked for: {overlap_details}")
+
         # Base update query
         update_sql = """
             UPDATE exam SET exam_name=%s, subject_id=%s, duration=%s, total_marks=%s, date=%s, exam_scope=%s, batch_year=%s, semester=%s, mode=%s, lab_id=%s, password_hash=%s 

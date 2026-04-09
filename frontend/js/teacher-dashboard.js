@@ -1656,7 +1656,7 @@ async function viewEvidence(id) {
                 </div>
                 <div>
                     <label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Exam</label>
-                    <div style="font-weight: 600; color: #111827;">${v.exam_name}</div>
+                    <div style="font-weight: 600; color: #111827;">${v.exam_name} <span style="font-size: 0.7rem; background: ${v.mode === 'CENTER' ? '#E0E7FF' : '#F3F4F6'}; color: ${v.mode === 'CENTER' ? '#3730A3' : '#4B5563'}; padding: 2px 6px; border-radius: 4px; margin-left: 4px; vertical-align: middle;">${v.mode || 'ONLINE'}</span></div>
                 </div>
                 <div>
                     <label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Violation Type</label>

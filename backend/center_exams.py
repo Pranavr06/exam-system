@@ -467,3 +467,39 @@ def start_exam(exam_id: int, payload: StartExamRequest, user: dict = Depends(req
     finally:
         cursor.close()
         conn.close()
+
+@router.get("/student/exams/{exam_id}/venue", dependencies=[Depends(require_student)])
+def get_student_venue(exam_id: int, user: dict = Depends(require_student)):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT e.mode, ab.name as block_name, f.floor_number, l.lab_name, p.pc_number
+            FROM exam e
+            LEFT JOIN lab l ON e.lab_id = l.lab_id
+            LEFT JOIN floor f ON l.floor_id = f.floor_id
+            LEFT JOIN academic_block ab ON f.block_id = ab.block_id
+            LEFT JOIN student_pc_assignment spa ON e.exam_id = spa.exam_id AND spa.student_id = %s
+            LEFT JOIN pc p ON spa.pc_id = p.pc_id
+            WHERE e.exam_id = %s
+        """, (user["user_id"], exam_id))
+        venue = cursor.fetchone()
+        if not venue:
+            raise HTTPException(status_code=404, detail="Exam not found")
+        if venue["mode"] != "CENTER":
+            return {"mode": "ONLINE", "message": "This is an online exam. No venue assigned."}
+        
+        floor_str = "Ground Floor"
+        if venue["floor_number"] == -1: floor_str = "Basement"
+        elif venue["floor_number"] and venue["floor_number"] > 0: floor_str = f"Floor {venue['floor_number']}"
+        
+        return {
+            "mode": "CENTER",
+            "block": venue["block_name"] or "Pending",
+            "floor": floor_str,
+            "lab": venue["lab_name"] or "Pending",
+            "pc_number": venue["pc_number"] or "Not Assigned Yet"
+        }
+    finally:
+        cursor.close()
+        conn.close()

@@ -297,7 +297,7 @@ def get_violation_details(violation_id: int, user=Depends(get_current_user)):
         dept_id = cursor.fetchone()["department_id"]
         
         cursor.execute("""
-            SELECT v.*, s.name as student_name, s.usn, e.exam_name, q.question_text
+            SELECT v.*, s.name as student_name, s.usn, e.exam_name, e.mode, q.question_text
             FROM violation v
             JOIN student s ON v.student_id = s.student_id
             JOIN exam e ON v.exam_id = e.exam_id

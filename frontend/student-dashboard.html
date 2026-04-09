@@ -171,11 +171,60 @@
                 </div>
             </div>
 
+            <!-- Venue Modal -->
+            <div id="venue-modal" class="modal">
+                <div class="modal-content" style="width: 90%; max-width: 450px; text-align: center;">
+                    <span class="close-btn" onclick="document.getElementById('venue-modal').style.display='none'">&times;</span>
+                    <h3 style="margin-bottom: 20px; color: #2c3e50;"><i class="fas fa-map-marker-alt" style="color: #e53e3e;"></i> Exam Venue Details</h3>
+                    <div id="venue-details-content" style="font-size: 1.1rem; line-height: 1.8; color: #34495e; background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; text-align: left;">
+                        <div class="spinner"></div>
+                    </div>
+                    <button class="submit-btn" style="margin-top: 20px; width: 100%; background-color: #4A5568;" onclick="document.getElementById('venue-modal').style.display='none'">Close</button>
+                </div>
+            </div>
+
         </div>
     </div>
 
     <script src="js/api.js"></script>
     <script src="js/auth.js"></script>
     <script src="js/student-dashboard.js"></script>
+    <script>
+        // Fetch and display venue details immediately
+        async function viewVenue(examId) {
+            const modal = document.getElementById('venue-modal');
+            const content = document.getElementById('venue-details-content');
+            
+            modal.style.display = 'flex';
+            modal.style.alignItems = 'center';
+            modal.style.justifyContent = 'center';
+            content.innerHTML = '<div class="spinner" style="margin: 0 auto;"></div>';
+            
+            try {
+                const venue = await apiRequest(`/student/exams/${examId}/venue`);
+                if (venue.mode === "ONLINE") {
+                    content.innerHTML = `<p style="text-align:center; color: #2b6cb0; font-weight: 500; margin: 0;">${venue.message}</p>`;
+                } else {
+                    content.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #cbd5e0; padding-bottom: 8px; margin-bottom: 8px;">
+                            <strong>Block:</strong> <span>${venue.block}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #cbd5e0; padding-bottom: 8px; margin-bottom: 8px;">
+                            <strong>Floor:</strong> <span>${venue.floor}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #cbd5e0; padding-bottom: 8px; margin-bottom: 8px;">
+                            <strong>Lab:</strong> <span>${venue.lab}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; padding-bottom: 8px; margin-bottom: 0px; background: #ebf8ff; padding: 10px; border-radius: 6px; border: 1px solid #bee3f8; align-items: center;">
+                            <strong style="color: #2b6cb0;">Assigned PC:</strong> 
+                            <strong style="color: #e53e3e; font-size: 1.4rem;">${venue.pc_number}</strong>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                content.innerHTML = `<p style="color: red; text-align: center; margin: 0;">Error loading venue: ${error.message}</p>`;
+            }
+        }
+    </script>
 </body>
 </html>

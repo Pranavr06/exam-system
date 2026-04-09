@@ -374,6 +374,21 @@ def create_exam_teacher(
                 detail=f"Time conflict! The selected sections already have exams scheduled during this time: {overlap_details}"
             )
 
+        # ✅ Check for Lab Booking Conflicts
+        if mode == "CENTER" and lab_id:
+            lab_overlap_query = """
+                SELECT exam_name FROM exam
+                WHERE lab_id = %s
+                  AND status != 'completed' AND is_archived = 0
+                  AND date < DATE_ADD(%s, INTERVAL %s MINUTE)
+                  AND DATE_ADD(date, INTERVAL duration MINUTE) > %s
+            """
+            cursor.execute(lab_overlap_query, (lab_id, formatted_date, duration, formatted_date))
+            lab_overlaps = cursor.fetchall()
+            if lab_overlaps:
+                overlap_details = ", ".join([f"'{o['exam_name']}'" for o in lab_overlaps])
+                raise HTTPException(status_code=400, detail=f"Lab conflict! The selected lab is already booked for: {overlap_details}")
+
         # 4. Insert Exam
         try:
             cursor.execute("""
@@ -1070,6 +1085,21 @@ def update_exam_teacher(
                 detail=f"Time conflict! The selected sections already have exams scheduled during this time: {overlap_details}"
             )
 
+        # ✅ Check for Lab Booking Conflicts
+        if mode == "CENTER" and lab_id:
+            lab_overlap_query = """
+                SELECT exam_name FROM exam
+                WHERE lab_id = %s AND exam_id != %s
+                  AND status != 'completed' AND is_archived = 0
+                  AND date < DATE_ADD(%s, INTERVAL %s MINUTE)
+                  AND DATE_ADD(date, INTERVAL duration MINUTE) > %s
+            """
+            cursor.execute(lab_overlap_query, (lab_id, exam_id, formatted_date, duration, formatted_date))
+            lab_overlaps = cursor.fetchall()
+            if lab_overlaps:
+                overlap_details = ", ".join([f"'{o['exam_name']}'" for o in lab_overlaps])
+                raise HTTPException(status_code=400, detail=f"Lab conflict! The selected lab is already booked for: {overlap_details}")
+
         # Update Exam
         cursor.execute("""
             UPDATE exam SET 
@@ -1238,7 +1268,7 @@ def get_violation_details_teacher(violation_id: int, user=Depends(get_current_us
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("""
-            SELECT v.*, s.name as student_name, s.usn, e.exam_name, q.question_text
+            SELECT v.*, s.name as student_name, s.usn, e.exam_name, e.mode, q.question_text
             FROM violation v
             JOIN student s ON v.student_id = s.student_id
             JOIN exam e ON v.exam_id = e.exam_id

@@ -1117,6 +1117,7 @@ window.toggleViolationDetails = function(detailsId, iconId) {
             if (icon) icon.style.transform = 'rotate(0deg)';
         }
     }
+};
 
 function togglePasswordVisibility(inputId, btn) {
     const input = document.getElementById(inputId);
@@ -1136,7 +1137,6 @@ function togglePasswordVisibility(inputId, btn) {
         }
     }
 }
-};
 
 let showingArchived = false;
 function toggleArchivedExams() {
@@ -1322,7 +1322,7 @@ async function viewEvidence(id) {
         let contentHtml = `
             <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px 24px; margin-bottom: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 24px;">
                 <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Student</label><div style="font-weight: 600; color: #111827;">${v.student_name} (${v.usn})</div></div>
-                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Exam</label><div style="font-weight: 600; color: #111827;">${v.exam_name}</div></div>
+                <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Exam</label><div style="font-weight: 600; color: #111827;">${v.exam_name} <span style="font-size: 0.7rem; background: ${v.mode === 'CENTER' ? '#E0E7FF' : '#F3F4F6'}; color: ${v.mode === 'CENTER' ? '#3730A3' : '#4B5563'}; padding: 2px 6px; border-radius: 4px; margin-left: 4px; vertical-align: middle;">${v.mode || 'ONLINE'}</span></div></div>
                 <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Violation Type</label><div><span style="color: #991B1B; background-color: #FEE2E2; padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">${v.violation_type}</span></div></div>
                 <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Status</label><div>${getStatusBadge(v.review_status)}</div></div>
                 <div><label style="font-size: 0.8rem; color: #6b7280; display: block; margin-bottom: 4px;">Time</label><div style="font-size: 0.9rem; color: #374151;">${new Date(v.timestamp || v.detected_at).toLocaleString()}</div></div>
