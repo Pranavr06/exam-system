@@ -179,25 +179,27 @@ def update_database():
         try:
             cursor.execute("""
                 CREATE TABLE `student` (
-                  `student_id` int NOT NULL AUTO_INCREMENT,
-                  `name` varchar(100) NOT NULL,
-                  `email` varchar(100) NOT NULL,
-                  `password_hash` varchar(255) NOT NULL,
-                  `usn` varchar(20) NOT NULL,
-                  `semester` int NOT NULL,
-                  `section_label` varchar(10) DEFAULT NULL,
-                  `section_id` int DEFAULT NULL,
-                  `department_id` int NOT NULL,
-                  `created_by_admin` int DEFAULT NULL,
-                  `risk_status` enum('Normal', 'High Risk') DEFAULT 'Normal',
-                  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-                  PRIMARY KEY (`student_id`),
-                  UNIQUE KEY `email` (`email`),
-                  UNIQUE KEY `usn` (`usn`),
-                  KEY `department_id` (`department_id`),
-                  KEY `section_id` (`section_id`),
-                  CONSTRAINT `student_ibfk_1` FOREIGN KEY (`department_id`) REFERENCES `department` (`department_id`) ON DELETE CASCADE,
-                  CONSTRAINT `student_ibfk_2` FOREIGN KEY (`section_id`) REFERENCES `section` (`section_id`) ON DELETE SET NULL
+                   `student_id` int NOT NULL AUTO_INCREMENT,
+                   `name` varchar(100) NOT NULL,
+                   `email` varchar(150) NOT NULL,
+                   `password_hash` varchar(255) NOT NULL,
+                   `usn` varchar(50) DEFAULT NULL,
+                   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+                   `department_id` int DEFAULT NULL,
+                   `semester` int DEFAULT NULL,
+                   `section_label` varchar(20) DEFAULT NULL,
+                   `section_id` int DEFAULT NULL,
+                   `created_by_admin` int NOT NULL,
+                   `risk_status` enum('Normal','High Risk') DEFAULT 'Normal',
+                   PRIMARY KEY (`student_id`),
+                   UNIQUE KEY `email` (`email`),
+                   UNIQUE KEY `usn` (`usn`),
+                   KEY `fk_student_department` (`department_id`),
+                   KEY `fk_student_section` (`section_id`),
+                   KEY `fk_student_admin` (`created_by_admin`),
+                   CONSTRAINT `fk_student_admin` FOREIGN KEY (`created_by_admin`) REFERENCES `admin` (`admin_id`) ON DELETE CASCADE,
+                   CONSTRAINT `fk_student_department` FOREIGN KEY (`department_id`) REFERENCES `department` (`department_id`) ON DELETE SET NULL ON UPDATE CASCADE,
+                   CONSTRAINT `fk_student_section` FOREIGN KEY (`section_id`) REFERENCES `section` (`section_id`) ON DELETE SET NULL ON UPDATE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
             """)
             print("✅ 'student' table created successfully.")

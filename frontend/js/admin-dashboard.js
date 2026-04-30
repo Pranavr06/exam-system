@@ -722,6 +722,16 @@ function togglePasswordVisibility(id, btn) {
 }
 
 // --- Import Students ---
+function openModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) modal.style.display = 'block';
+}
+
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) modal.style.display = 'none';
+}
+
 function openImportModal() {
     openModal('import-modal');
 }
@@ -738,7 +748,8 @@ async function handleImportStudents(event) {
     try {
         // Use fetch directly for file upload to handle FormData correctly
         const token = localStorage.getItem('access_token');
-        const response = await fetch('http://127.0.0.1:8000/admin/students/import', {
+        const apiUrl = window.API_BASE_URL ? `${window.API_BASE_URL}/admin/students/import` : 'http://127.0.0.1:8000/admin/students/import';
+        const response = await fetch(apiUrl, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`

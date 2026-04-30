@@ -811,12 +811,10 @@
     </div>
 
     <!-- Import Students Modal -->
-    <div id="import-modal" class="sa-modal">
-        <div class="sa-modal-content">
-            <div class="sa-modal-header">
-                <h3 class="sa-modal-title">Import Students via CSV</h3>
-                <button class="sa-modal-close" onclick="closeModal('import-modal')">&times;</button>
-            </div>
+    <div id="import-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal('import-modal')">&times;</span>
+            <h3 style="margin-bottom: 15px; color: #2c3e50;">Import Students via CSV</h3>
             <form id="import-form" onsubmit="handleImportStudents(event)">
                 <p style="margin-bottom: 15px; color: #666; font-size: 0.9rem;">
                     Upload a CSV file with columns: <strong>name, email, usn, semester, section_id</strong>. <br>

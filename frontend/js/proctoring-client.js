@@ -13,7 +13,8 @@ class ProctoringSystem {
         
         this.isProctoringActive = false;
         this.proctorInterval = null;
-        this.apiEndpoint = 'http://localhost:8000/proctor/detect'; // Use the new endpoint
+        // Use dynamic backend URL or fallback to localhost
+        this.apiEndpoint = (window.API_BASE_URL || 'http://localhost:8000') + '/proctor/detect';
         this.currentQuestionId = null;
         this.lastTabSwitch = 0;
     }
