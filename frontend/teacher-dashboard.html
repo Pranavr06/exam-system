@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
 <body>
+    <div class="sidebar-overlay" id="mobile-overlay" onclick="toggleSidebar()"></div>
     <div class="sidebar">
         <h2>Teacher Panel</h2>
         <button type="button" data-section="dashboard" onclick="showSection('dashboard')" class="active"><i class="fas fa-tachometer-alt fa-fw"></i> Dashboard</button>
@@ -27,7 +28,7 @@
     <div class="content">
         <!-- Top Navbar -->
         <header class="top-navbar">
-            <div class="app-logo">OEMS</div>
+            <button class="mobile-menu-btn" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button><div class="app-logo">OEMS</div>
             <div class="user-profile">
                 <span id="nav-dept" class="dept-badge"></span>
                 <span id="nav-user" class="user-name">Loading...</span>

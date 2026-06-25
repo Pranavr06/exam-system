@@ -51,3 +51,9 @@ async function apiRequest(endpoint, method = "GET", body = null) {
         hideLoading();
     }
 }
+function toggleSidebar() {
+    const sidebar = document.querySelector('.sidebar') || document.querySelector('.exam-sidebar');
+    const overlay = document.getElementById('mobile-overlay');
+    if (sidebar) sidebar.classList.toggle('open');
+    if (overlay) overlay.classList.toggle('open');
+}

@@ -895,3 +895,81 @@ div[id$="-pagination"] button:disabled {
     cursor: not-allowed;
     border-color: #dee2e6;
 }
+/* --- Mobile Responsiveness --- */
+.mobile-menu-btn {
+    display: none;
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    color: #2c3e50;
+    cursor: pointer;
+    margin-right: 15px;
+}
+
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: rgba(0,0,0,0.5);
+    z-index: 1000;
+}
+
+@media (max-width: 768px) {
+    .mobile-menu-btn { display: block; }
+    .top-navbar { padding: 0 15px; }
+    .top-navbar.super-admin .mobile-menu-btn { color: #1E293B; }
+    
+    .sidebar {
+        position: fixed;
+        left: -260px;
+        top: 0;
+        bottom: 0;
+        z-index: 1001;
+        transition: left 0.3s ease;
+    }
+    .sidebar.open { left: 0; }
+    .sidebar-overlay.open { display: block; }
+    
+    .main-scrollable-content { padding: 15px; }
+    .dashboard-grid { grid-template-columns: 1fr; }
+    .sa-dashboard-grid { grid-template-columns: 1fr; }
+    .dashboard-content-row { flex-direction: column; }
+    
+    .modal-content, .sa-modal-content { width: 95%; padding: 15px; margin: 10% auto; }
+    
+    .card-box, .sa-card, .semester-card, .form-container, .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { min-width: 600px; }
+    
+    .dept-badge { display: none; }
+    .user-name { font-size: 0.9rem; }
+    
+    .question-form-grid .left-col, .question-form-grid .right-col { min-width: 100%; }
+    #student-section form .form-group, #exam-section form .form-group { min-width: 100%; }
+}
+
+@media (max-width: 768px) {
+    /* Fix Form Layouts */
+    .form-group { min-width: 100%; }
+    .form-container form { flex-direction: column; align-items: stretch; }
+    .submit-btn { width: 100%; margin-top: 5px; height: 45px; }
+
+    /* Fix Compact Item Lists (Teachers, etc) */
+    .compact-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    .compact-actions {
+        width: 100%;
+        display: flex;
+        justify-content: flex-end;
+        border-top: 1px dashed #e2e8f0;
+        padding-top: 8px;
+        margin-top: 4px;
+    }
+
+    /* Navbar space fixes */
+    .role-badge { display: none; }
+    .nav-logout-btn { padding: 4px 8px; font-size: 0.8rem; }
+    .app-logo { font-size: 1.1rem; }
+}
