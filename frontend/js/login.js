@@ -137,10 +137,9 @@ function showForgotPasswordModal(event) {
             popup.classList.add('shake-modal');
             
             const btn = Swal.getConfirmButton();
+            btn.classList.remove('highlight-understood-btn');
+            void btn.offsetWidth; // Trigger DOM reflow for button animation
             btn.classList.add('highlight-understood-btn');
-            setTimeout(() => {
-                btn.classList.remove('highlight-understood-btn');
-            }, 400); // Remove highlight after animation ends
             
             return false; // Prevent closing
         }

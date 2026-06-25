@@ -194,9 +194,12 @@ body, html { height: 100%; width: 100%; }
 .shake-modal {
   animation: swalShake 0.4s ease-in-out !important;
 }
+@keyframes btnHighlightPulse {
+  0% { box-shadow: none; transform: scale(1); }
+  50% { box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.4), 0 0 20px rgba(37, 99, 235, 0.8); transform: scale(1.05); }
+  100% { box-shadow: none; transform: scale(1); }
+}
 .highlight-understood-btn {
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.4), 0 0 20px rgba(37, 99, 235, 0.8) !important;
-  transform: scale(1.05) !important;
-  transition: all 0.2s ease-in-out !important;
+  animation: btnHighlightPulse 0.4s ease-in-out !important;
 }
 
