@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://exam-system-2k9t.onrender.com";
 
 function showLoading() {
     const spinner = document.getElementById('loading-spinner');
