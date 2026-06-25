@@ -55,6 +55,40 @@ app.include_router(proctoring_router)
 def root():
     return {"message": "OEMS Backend Running"}
 
+
+import httpx
+import os
+
+@app.get("/ping")
+async def keep_alive_ping():
+    # 1. Ping Aiven Database
+    conn = get_connection()
+    if conn:
+        conn.close()
+    
+    # 2. Ping Supabase Storage to keep it awake
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    supabase_status = "Skipped"
+    if supabase_url and supabase_key:
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.get(
+                    f"{supabase_url}/storage/v1/bucket",
+                    headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"},
+                    timeout=5.0
+                )
+                supabase_status = "Awake" if resp.status_code == 200 else f"Error {resp.status_code}"
+            except Exception:
+                supabase_status = "Failed"
+
+    return {
+        "status": "All systems awake!",
+        "render": "Awake",
+        "aiven_db": "Awake" if conn else "Failed",
+        "supabase": supabase_status
+    }
 @app.get("/db-test")
 def db_test():
     conn = get_connection()
@@ -62,3 +96,4 @@ def db_test():
         conn.close()
         return {"status": "Database connected"}
     return {"status": "Database connection failed"}
+
