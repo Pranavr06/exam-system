@@ -55,7 +55,8 @@
                     <button type="submit" class="login-btn" id="login-btn"><span id="btn-text">Sign In</span><i class="fas fa-arrow-right" id="btn-icon"></i><i class="fas fa-spinner fa-spin" id="btn-spinner" style="display: none;"></i></button>
                 </form>
             </div>
-            <div class="login-footer">&copy; 2026 OEMS — Online Examination Management System</div>
+            <div class="login-footer">&copy; <span id="current-year"></span> OEMS — Online Examination Management System</div>
+            <script>document.getElementById("current-year").textContent = new Date().getFullYear();</script>
         </div>
     </div>
     <script src="js/api.js"></script>

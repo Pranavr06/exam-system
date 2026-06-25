@@ -183,3 +183,20 @@ body, html { height: 100%; width: 100%; }
         font-size: 11px;
     }
 }
+@keyframes swalShake {
+  0% { transform: translateX(0); }
+  20% { transform: translateX(-10px); }
+  40% { transform: translateX(10px); }
+  60% { transform: translateX(-10px); }
+  80% { transform: translateX(10px); }
+  100% { transform: translateX(0); }
+}
+.shake-modal {
+  animation: swalShake 0.4s ease-in-out !important;
+}
+.highlight-understood-btn {
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.4), 0 0 20px rgba(37, 99, 235, 0.8) !important;
+  transform: scale(1.05) !important;
+  transition: all 0.2s ease-in-out !important;
+}
+
