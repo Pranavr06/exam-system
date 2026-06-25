@@ -45,7 +45,7 @@ async function login(event) {
 
     try {
         const data = await apiRequest(
-            //login?email=&password=,
+            `/${urlPrefix}/login?email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`,
             "POST",
             null
         );
