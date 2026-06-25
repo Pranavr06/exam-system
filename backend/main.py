@@ -25,7 +25,11 @@ app = FastAPI(title="OEMS API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # for development only
+    allow_origins=[
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "https://evalix-exam.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,11 +79,11 @@ async def keep_alive_ping():
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.get(
-                    f"{supabase_url}/storage/v1/bucket",
-                    headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"},
+                    f"${supabase_url}/storage/v1/bucket",
+                    headers={"apikey": supabase_key, "Authorization": f"Bearer ${supabase_key}"},
                     timeout=5.0
                 )
-                supabase_status = "Awake" if resp.status_code == 200 else f"Error {resp.status_code}"
+                supabase_status = "Awake" if resp.status_code == 200 else f"Error ${resp.status_code}"
             except Exception:
                 supabase_status = "Failed"
 
@@ -89,6 +93,7 @@ async def keep_alive_ping():
         "aiven_db": "Awake" if conn else "Failed",
         "supabase": supabase_status
     }
+
 @app.get("/db-test")
 def db_test():
     conn = get_connection()
@@ -96,4 +101,3 @@ def db_test():
         conn.close()
         return {"status": "Database connected"}
     return {"status": "Database connection failed"}
-
