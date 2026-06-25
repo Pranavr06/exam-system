@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 import os
 import mysql.connector
 from mysql.connector import Error
@@ -35,3 +37,4 @@ def get_connection():
     except Error as e:
         print("Database connection failed:", e)
         return None
+
