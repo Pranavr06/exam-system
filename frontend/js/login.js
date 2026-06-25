@@ -116,3 +116,19 @@ function toggleLoginPassword(btn) {
         }
     }
 }
+function showForgotPasswordModal(event) {
+    if (event) event.preventDefault();
+    Swal.fire({
+        title: 'Password Reset',
+        html: '<p style=\"color: #475569; font-size: 15px; margin-bottom: 10px;\">For security reasons, self-service password resets are disabled.</p><p style=\"color: #475569; font-size: 15px;\">Please contact your Department Administrator to receive a temporary password. If necessary, contact the Examination Cell or System Administrator.</p>',
+        icon: 'info',
+        confirmButtonText: 'Understood',
+        confirmButtonColor: '#2563eb',
+        background: '#ffffff',
+        customClass: {
+            title: 'swal2-title-custom',
+            popup: 'swal2-popup-custom'
+        }
+    });
+}
+

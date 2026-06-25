@@ -145,7 +145,7 @@ body, html { height: 100%; width: 100%; }
     .login-right { 
         width: 100%; 
         background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); 
-        padding: 20px;
+        padding: 10px;
     }
     
     .login-card { 
@@ -153,25 +153,33 @@ body, html { height: 100%; width: 100%; }
         max-width: 400px; 
         box-shadow: 0 15px 35px rgba(0,0,0,0.4); 
         border: none; 
-        padding: 40px 25px;
+        padding: 25px 20px;
     }
 
     .mobile-logo {
         display: flex;
         justify-content: center;
         align-items: center;
-        gap: 12px;
-        font-size: 28px;
+        gap: 8px;
+        font-size: 24px;
         font-weight: 800;
         color: #1e3a8a;
-        margin-bottom: 20px;
+        margin-bottom: 10px;
     }
 
-    .login-header { margin-bottom: 25px; }
-    .login-title { font-size: 22px; }
+    .login-header { margin-bottom: 15px; }
+    .login-title { font-size: 20px; margin-bottom: 4px; }
+    .login-subtitle { font-size: 13px; }
+
+    .form-group { margin-bottom: 12px; }
+    .form-label { margin-bottom: 4px; }
+    .form-input { height: 40px; }
+    .login-btn { height: 40px; }
+    .form-options { margin-bottom: 15px; }
 
     .login-footer {
         color: rgba(255, 255, 255, 0.7);
-        bottom: 15px;
+        bottom: 10px;
+        font-size: 11px;
     }
 }
