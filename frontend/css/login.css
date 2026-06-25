@@ -58,6 +58,7 @@ body, html { height: 100%; width: 100%; }
     to { opacity: 1; transform: translateY(0); }
 }
 
+.mobile-logo { display: none; }
 .login-header { margin-bottom: 30px; text-align: center; }
 .login-title { font-size: 26px; font-weight: 700; color: #1e293b; margin-bottom: 8px; }
 .login-subtitle { font-size: 14px; color: #64748b; }
@@ -140,6 +141,37 @@ body, html { height: 100%; width: 100%; }
 /* Responsive */
 @media (max-width: 768px) {
     .login-left { display: none; }
-    .login-right { width: 100%; }
-    .login-card { width: 90%; max-width: 400px; box-shadow: none; border: 1px solid #e2e8f0; }
+    
+    .login-right { 
+        width: 100%; 
+        background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); 
+        padding: 20px;
+    }
+    
+    .login-card { 
+        width: 100%; 
+        max-width: 400px; 
+        box-shadow: 0 15px 35px rgba(0,0,0,0.4); 
+        border: none; 
+        padding: 40px 25px;
+    }
+
+    .mobile-logo {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 12px;
+        font-size: 28px;
+        font-weight: 800;
+        color: #1e3a8a;
+        margin-bottom: 20px;
+    }
+
+    .login-header { margin-bottom: 25px; }
+    .login-title { font-size: 22px; }
+
+    .login-footer {
+        color: rgba(255, 255, 255, 0.7);
+        bottom: 15px;
+    }
 }
