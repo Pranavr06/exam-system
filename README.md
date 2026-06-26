@@ -155,6 +155,8 @@ This repository utilizes **GitHub Actions** (`.github/workflows/keep-system-aliv
 
 > 🎓 Developed as an academic project focused on secure, scalable, and AI-assisted online examination management.
 
+---
+
 ## 📜 License
 
 This project is licensed under the MIT License.
