@@ -109,12 +109,51 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 Simply open `frontend/login.html` in your browser. (Optionally, use an extension like VS Code Live Server to serve the files on `localhost:5500`). Ensure `frontend/js/api.js` points to `http://localhost:8000` during local development.
 
 ---
+## 👥 Team & Contributions
+
+### **Pranav R**
+
+**🛡️ Full-Stack AI Engineer & Project Lead**
+
+* Spearheaded the overall project architecture, development, and integration.
+* Designed and developed the full-stack examination management system.
+* Implemented the AI-based proctoring engine using **YOLOv8**.
+* Developed the secure backend APIs using **FastAPI**.
+* Designed the database schema and authentication system.
+* Integrated the cloud-based evidence storage pipeline using **AWS S3/Supabase Storage**.
+* Coordinated project planning, documentation, and system deployment.
+
+---
+
+### **Pratham (NNM24IS164)**
+
+**🎨 Frontend Developer**
+
+* Developed the secure examination interface and student dashboard modules.
+* Implemented responsive frontend components and user workflows.
+* Improved user experience and interface consistency.
+* Assisted in frontend integration with backend APIs.
+
+---
+
+### **Prathwik**
+
+**⚙️ Backend API Developer**
+
+* Developed backend modules using **FastAPI**.
+* Implemented API endpoints and business logic.
+* Integrated database operations and secure data handling.
+* Assisted in authentication and system integration.
+
+---
 
 ## 📡 Automated Maintenance
 
 This repository utilizes **GitHub Actions** (`.github/workflows/keep-system-alive.yml`) to automatically ping the backend endpoints every 14 minutes. This guarantees that the Render web service, Aiven MySQL database, and Supabase project bypass aggressive free-tier sleep cycles, resulting in zero cold-start latency for end users.
 
 ---
+
+> 🎓 Developed as an academic project focused on secure, scalable, and AI-assisted online examination management.
 
 ## 📜 License
 
