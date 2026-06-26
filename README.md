@@ -9,7 +9,7 @@
 ![Authentication](https://img.shields.io/badge/Auth-JWT-orange?style=for-the-badge)
 ![Proctoring](https://img.shields.io/badge/AI-Proctoring-red?style=for-the-badge)
 ![Deployment](https://img.shields.io/badge/Deploy-Vercel%20%7C%20Render-black?style=for-the-badge)
-![Status](https://img.shields.io/badge/Status-Active-success?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Maintained-brightgreen?style=for-the-badge)
 
 A modern, robust, and highly scalable Online Exam Management System. This platform provides a seamless, secure, and fully proctored environment for institutions to conduct examinations, manage student academic records, and monitor exam integrity.
 
