@@ -1,10 +1,15 @@
 # 🎓 Online Exam Management System (OEMS)
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688)
-![MySQL](https://img.shields.io/badge/MySQL-8.0-orange)
-![Vanilla JS](https://img.shields.io/badge/JavaScript-Vanilla-F7DF1E)
+![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?style=for-the-badge&logo=mysql&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-Vanilla-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black)
+![Supabase](https://img.shields.io/badge/Supabase-Storage-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)
+![Authentication](https://img.shields.io/badge/Auth-JWT-orange?style=for-the-badge)
+![Proctoring](https://img.shields.io/badge/AI-Proctoring-red?style=for-the-badge)
+![Deployment](https://img.shields.io/badge/Deploy-Vercel%20%7C%20Render-black?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Active-success?style=for-the-badge)
 
 A modern, robust, and highly scalable Online Exam Management System. This platform provides a seamless, secure, and fully proctored environment for institutions to conduct examinations, manage student academic records, and monitor exam integrity.
 
